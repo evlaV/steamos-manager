@@ -9,6 +9,8 @@
 use anyhow::anyhow;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use tokio::sync::mpsc::{unbounded_channel, Sender};
 use tokio::sync::oneshot;
@@ -19,9 +21,11 @@ use tracing_subscriber::{fmt, EnvFilter, Registry};
 #[cfg(not(test))]
 use xdg::BaseDirectories;
 use zbus::connection::{Builder, Connection};
+use zbus::AuthMechanism;
 
 use crate::daemon::{channel, Daemon, DaemonCommand, DaemonContext};
 use crate::job::{JobManager, JobManagerService};
+use crate::manager::root::HandleContextProxy;
 use crate::manager::user::{create_interfaces, SignalRelayService};
 use crate::path;
 use crate::power::TdpManagerService;
@@ -133,6 +137,7 @@ async fn create_connections(
 ) -> Result<(
     Connection,
     Connection,
+    Connection,
     JobManagerService,
     Result<TdpManagerService>,
     SignalRelayService,
@@ -143,24 +148,42 @@ async fn create_connections(
         .build()
         .await?;
 
+    let fd = HandleContextProxy::new(&system).await?.get_handle().await?;
+
+    let stream = UnixStream::from(OwnedFd::from(fd));
+    let stream = tokio::net::UnixStream::from_std(stream)?;
+
+    let root = Builder::unix_stream(stream)
+        .auth_mechanism(AuthMechanism::Anonymous)
+        .build()
+        .await?;
+
     let (jm_tx, rx) = unbounded_channel();
     let job_manager = JobManager::new(connection.clone()).await?;
-    let jm_service = JobManagerService::new(job_manager, rx, system.clone());
+    let jm_service = JobManagerService::new(job_manager, rx, root.clone());
 
     let (tdp_tx, rx) = unbounded_channel();
-    let tdp_service = TdpManagerService::new(rx, &system, &connection).await;
+    let tdp_service = TdpManagerService::new(rx, &root, &connection).await;
     let tdp_tx = if tdp_service.is_ok() {
         Some(tdp_tx)
     } else {
         None
     };
 
-    let signal_relay_service =
-        create_interfaces(connection.clone(), system.clone(), channel, jm_tx, tdp_tx).await?;
+    let signal_relay_service = create_interfaces(
+        connection.clone(),
+        system.clone(),
+        root.clone(),
+        channel,
+        jm_tx,
+        tdp_tx,
+    )
+    .await?;
 
     Ok((
         connection,
         system,
+        root,
         jm_service,
         tdp_service,
         signal_relay_service,
@@ -178,7 +201,7 @@ pub async fn daemon() -> Result<()> {
     set_global_default(subscriber)?;
     let (tx, rx) = channel::<UserContext>();
 
-    let (session, _system, mirror_service, tdp_service, signal_relay_service) =
+    let (session, _system, _root, mirror_service, tdp_service, signal_relay_service) =
         match create_connections(tx.clone()).await {
             Ok(c) => c,
             Err(e) => {

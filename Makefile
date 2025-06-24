@@ -29,6 +29,7 @@ install: target/release/steamos-manager target/release/steamosctl
 	install -D -m644 LICENSE "$(DESTDIR)/usr/share/licenses/steamos-manager/LICENSE"
 
 	install -m644 "data/platform.toml" "$(DESTDIR)/usr/share/steamos-manager/"
+	install -m644 "data/root-dbus.conf" "$(DESTDIR)/usr/share/steamos-manager/"
 
 	install -D -m644 -t "$(DESTDIR)/usr/share/dbus-1/interfaces" "data/interfaces/"*
 

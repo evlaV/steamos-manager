@@ -83,18 +83,6 @@ out from under SteamOS Manager if something on the system bypasses it. While
 this should never be the case if the user doesn't prod at the underlying system
 manually, it's something that interface users should be aware of.
 
-## Implementation details
-
-SteamOS Manager is compromised of two daemons: one runs as the logged in user
-and exposes a public DBus API on the session bus, and the second daemon runs as
-the `root` user. The root daemon exposes a limited DBus API on the system bus
-for tasks that require elevated permissions to execute.
-
-The DBus API exposed on the system bus is considered a private implementation
-detail of SteamOS Manager and it may be changed at any moment and without
-warning. For this reason, we don't provide an XML schema for the system
-daemon's interface and clients shouldn't use it directly.
-
 ## Extending the API
 
 To extend the API with a new method or property update the XML schema and

@@ -9,14 +9,21 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use tokio::fs::File;
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::MetadataExt;
+use tokio::fs::{metadata, File};
+use tokio::net::UnixSocket;
+use tokio::process;
 use tokio::spawn;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tracing::{error, info};
+use zbus::fdo::{self, DBusProxy};
+use zbus::message::Header;
+use zbus::names::BusName;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{self, Fd};
-use zbus::{fdo, interface, proxy, Connection};
+use zbus::zvariant::{self, Fd, OwnedFd as ZOwnedFd};
+use zbus::{interface, proxy, Connection};
 
 use crate::daemon::root::{Command, RootCommand};
 use crate::daemon::DaemonCommand;
@@ -205,7 +212,7 @@ impl SteamOSManager {
         let result = File::create(als_path).await;
 
         match result {
-            Ok(f) => Ok(Fd::Owned(std::os::fd::OwnedFd::from(f.into_std().await))),
+            Ok(f) => Ok(Fd::Owned(OwnedFd::from(f.into_std().await))),
             Err(message) => {
                 error!("Error opening sysfs file for giving file descriptor: {message}");
                 Err(fdo::Error::IOError(message.to_string()))
@@ -560,6 +567,72 @@ impl SteamOSManager {
     async fn version(&self) -> u32 {
         API_VERSION
     }
+}
+
+pub(crate) struct HandleContext {}
+
+impl HandleContext {
+    pub const SOCKPATH: &str = "/run/steamos-manager/dbus.socket";
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.HandleContext")]
+impl HandleContext {
+    async fn get_handle(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] connection: &Connection,
+    ) -> fdo::Result<Fd> {
+        // To prevent things from snooping on or sending messages to the root
+        // daemon indiscriminately, the communication channel between the user
+        // and root daemons is done via a unix socket that is owned by root.
+        // The GetHandle function will return a file descriptor to that socket
+        // that the user daemon can use, but it validates that the caller is in
+        // fact the user daemon. To do this, it validates that the user daemon
+        // is both running the same executable as the root daemon as well as
+        // that the user daemon owns the bus name on the session bus.
+        let Some(sender) = header.sender() else {
+            return Err(fdo::Error::InvalidArgs(String::from("No sender found")));
+        };
+        let dbus = DBusProxy::new(connection).await?;
+        let sender = BusName::Unique(sender.clone());
+        let pid = dbus.get_connection_unix_process_id(sender.clone()).await?;
+        let uid = dbus.get_connection_unix_user(sender).await?;
+        let gid = metadata(format!("/proc/{pid}"))
+            .await
+            .map_err(|e| fdo::Error::AuthFailed(e.to_string()))?
+            .gid();
+
+        let result = process::Command::new("/proc/self/exe")
+            .args(&["--validate-bus-owner", pid.to_string().as_str()])
+            .uid(uid)
+            .gid(gid)
+            .output()
+            .await
+            .map_err(|e| fdo::Error::AuthFailed(format!("Failed to authenticate sender: {e}")))?;
+
+        if !result.status.success() {
+            return Err(fdo::Error::AccessDenied(
+                String::from_utf8_lossy(&result.stderr).trim().to_string(),
+            ));
+        }
+
+        let sock = UnixSocket::new_stream().map_err(to_zbus_fdo_error)?;
+        let stream = sock
+            .connect(Self::SOCKPATH)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        let fd = stream.into_std().map_err(to_zbus_fdo_error)?;
+        Ok(Fd::Owned(OwnedFd::from(fd)))
+    }
+}
+
+#[proxy(
+    interface = "com.steampowered.SteamOSManager1.HandleContext",
+    default_service = "com.steampowered.SteamOSManager1",
+    default_path = "/com/steampowered/SteamOSManager1"
+)]
+pub(crate) trait HandleContext {
+    async fn get_handle(&self) -> fdo::Result<ZOwnedFd>;
 }
 
 #[cfg(test)]
