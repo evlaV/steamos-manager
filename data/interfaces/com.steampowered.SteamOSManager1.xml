@@ -356,7 +356,7 @@
   </interface>
 
   <!--
-      com.steampowered.SteamOSManager1.ScreenReader1
+      com.steampowered.SteamOSManager1.ScreenReader0
       @short_description: Optional interface for managing a screen reader.
 
       This interface is considered unstable and may change between verisons.
@@ -445,6 +445,97 @@
     -->
     <method name="TriggerAction">
       <arg type="u" name="action" direction="in"/>
+      <arg type="t" name="timestamp" direction="in"/>
+    </method>
+
+  </interface>
+  <!--
+      com.steampowered.SteamOSManager1.ScreenReader1
+      @short_description: Optional interface for managing a screen reader.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.ScreenReader1">
+    <!--
+        Enabled
+
+        True if screen reader is enabled, false otherwise.
+    -->
+    <property name="Enabled" type="b" access="readwrite"/>
+
+    <!--
+        Rate
+
+        The rate of speech output. Valid values are 0 for slowest to 100 for fastest.
+    -->
+    <property name="Rate" type="d" access="readwrite"/>
+
+    <!--
+        Pitch
+
+        The pitch for speech output. Valid values are 0.0 for lowest, and 10.0 for highest.
+    -->
+    <property name="Pitch" type="d" access="readwrite"/>
+
+    <!--
+        Volume
+
+        The volume for speech output. Valid values ar 0.0 for off, 10.0 for highest.
+    -->
+    <property name="Volume" type="d" access="readwrite"/>
+
+    <!--
+        Mode
+
+        Which mode the screen reader should operate in.
+
+        Valid modes: browse - Browse mode, focus - Focus mode.
+    -->
+    <property name="Mode" type="s" access="readwrite"/>
+
+    <!--
+        Voice
+
+        The voice to use for screen reading.
+
+        Valid voices can be found from GetVoicesForLocale
+    -->
+    <property name="Voice" type="s" access="readwrite"/>
+
+    <!--
+        Voice Locales
+
+        The list of known voice locales
+    -->
+    <property name="VoiceLocales" type="as" access="read"/>
+
+    <!--
+        Map of voice names per locale
+    -->
+    <property name="VoicesForLocale" type="a{sas}" access="read"/>
+
+    <!--
+        Trigger Action
+
+        Forward a user interaction event to the screen reader service.
+
+        @action: The action genereated via user input. Valid values:
+          stop_talking = Stop Talking
+          read_next_word = Read Next Word,
+          read_previous_word = Read Previous Word,
+          read_next_item = Read Next Item,
+          read_previous_item = Read Previous Item,
+          move_to_next_landmark = Move To Next Landmark,
+          move_to_previous_landmark = Move To Previous Landmark,
+          move_to_next_heading = Move To Next Heading,
+          move_to_previous_heading = Move To Previous Heading,
+          toggle_mode = Toggle between Browse mode and Focus mode,
+
+        @timestamp: refers to the time the user interaction event
+        that triggered this event happened. E.g. when the user pressed
+        a key to request this action. (Encoded as nanoseconds since the
+        start of CLOCK_MONOTONIC_RAW).
+    -->
+    <method name="TriggerAction">
+      <arg type="s" name="action" direction="in"/>
       <arg type="t" name="timestamp" direction="in"/>
     </method>
 

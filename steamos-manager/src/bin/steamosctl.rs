@@ -19,7 +19,7 @@ use steamos_manager::proxy::{
     AmbientLightSensor1Proxy, Audio1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy,
     CpuScaling1Proxy, CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy,
     GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy,
-    Manager2Proxy, PerformanceProfile1Proxy, ScreenReader0Proxy, SessionManagement1Proxy,
+    Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy,
     Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiDebug1Proxy,
     WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
 };
@@ -700,72 +700,72 @@ async fn main() -> Result<()> {
             println!("Variant: {variant}");
         }
         Commands::GetScreenReaderEnabled => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let enabled = proxy.enabled().await?;
             println!("Enabled: {enabled}");
         }
         Commands::SetScreenReaderEnabled { enable } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             proxy.set_enabled(*enable).await?;
         }
         Commands::GetScreenReaderRate => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let rate = proxy.rate().await?;
             println!("Rate: {rate}");
         }
         Commands::SetScreenReaderRate { rate } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             proxy.set_rate(*rate).await?;
         }
         Commands::GetScreenReaderPitch => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let pitch = proxy.pitch().await?;
             println!("Pitch: {pitch}");
         }
         Commands::SetScreenReaderPitch { pitch } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             proxy.set_pitch(*pitch).await?;
         }
         Commands::GetScreenReaderVolume => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let volume = proxy.volume().await?;
             println!("Volume: {volume}");
         }
         Commands::SetScreenReaderVolume { volume } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             proxy.set_volume(*volume).await?;
         }
         Commands::GetScreenReaderMode => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let mode = proxy.mode().await?;
-            match ScreenReaderMode::try_from(mode) {
+            match ScreenReaderMode::try_from(mode.as_str()) {
                 Ok(s) => println!("Screen Reader Mode: {s}"),
                 Err(_) => println!("Got unknown screen reader mode value {mode} from backend"),
             }
         }
         Commands::SetScreenReaderMode { mode } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
-            proxy.set_mode(*mode as u32).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
+            proxy.set_mode(mode.to_string().as_str()).await?;
         }
         Commands::TriggerScreenReaderAction { action } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let timestamp = clock_gettime(ClockId::CLOCK_MONOTONIC_RAW)?;
             let now = timestamp.tv_sec() * 1_000_000_000 + timestamp.tv_nsec();
             proxy
-                .trigger_action(*action as u32, now.try_into()?)
+                .trigger_action(action.to_string().as_str(), now.try_into()?)
                 .await?;
         }
         Commands::GetScreenReaderVoice => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let voice = proxy.voice().await?;
             println!("Voice: {voice}");
         }
         Commands::SetScreenReaderVoice { voice } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             proxy.set_voice(voice).await?;
         }
         Commands::GetScreenReaderLocales => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let locales = proxy.voice_locales().await?;
             println!("Locales:\n");
             for locale in locales.into_iter().sorted() {
@@ -773,7 +773,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::GetScreenReaderVoicesForLocale { locale } => {
-            let proxy = ScreenReader0Proxy::new(&conn).await?;
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
             let voice_list = proxy.voices_for_locale().await?;
             let voices = voice_list
                 .get(locale)

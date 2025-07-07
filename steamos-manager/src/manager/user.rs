@@ -8,9 +8,10 @@
 
 use anyhow::{Error, Result};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::fs::try_exists;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 use zbus::message::Header;
@@ -184,7 +185,11 @@ struct PerformanceProfile1 {
 }
 
 struct ScreenReader0 {
-    screen_reader: OrcaManager<'static>,
+    screen_reader: Arc<Mutex<OrcaManager<'static>>>,
+}
+
+struct ScreenReader1 {
+    screen_reader: Arc<Mutex<OrcaManager<'static>>>,
 }
 
 struct SessionManagement1 {
@@ -794,8 +799,7 @@ impl PerformanceProfile1 {
 }
 
 impl ScreenReader0 {
-    async fn new(connection: &Connection) -> Result<ScreenReader0> {
-        let screen_reader = OrcaManager::new(connection).await?;
+    async fn new(screen_reader: Arc<Mutex<OrcaManager<'static>>>) -> Result<ScreenReader0> {
         Ok(ScreenReader0 { screen_reader })
     }
 }
@@ -804,12 +808,14 @@ impl ScreenReader0 {
 impl ScreenReader0 {
     #[zbus(property)]
     async fn enabled(&self) -> bool {
-        self.screen_reader.enabled()
+        self.screen_reader.lock().await.enabled()
     }
 
     #[zbus(property)]
     async fn set_enabled(&mut self, enabled: bool) -> fdo::Result<()> {
         self.screen_reader
+            .lock()
+            .await
             .set_enabled(enabled)
             .await
             .map_err(to_zbus_fdo_error)
@@ -817,12 +823,14 @@ impl ScreenReader0 {
 
     #[zbus(property)]
     async fn rate(&self) -> f64 {
-        self.screen_reader.rate()
+        self.screen_reader.lock().await.rate()
     }
 
     #[zbus(property)]
     async fn set_rate(&mut self, rate: f64) -> fdo::Result<()> {
         self.screen_reader
+            .lock()
+            .await
             .set_rate(rate)
             .await
             .map_err(to_zbus_fdo_error)
@@ -830,12 +838,14 @@ impl ScreenReader0 {
 
     #[zbus(property)]
     async fn pitch(&self) -> f64 {
-        self.screen_reader.pitch()
+        self.screen_reader.lock().await.pitch()
     }
 
     #[zbus(property)]
     async fn set_pitch(&mut self, pitch: f64) -> fdo::Result<()> {
         self.screen_reader
+            .lock()
+            .await
             .set_pitch(pitch)
             .await
             .map_err(to_zbus_fdo_error)
@@ -843,12 +853,14 @@ impl ScreenReader0 {
 
     #[zbus(property)]
     async fn volume(&self) -> f64 {
-        self.screen_reader.volume()
+        self.screen_reader.lock().await.volume()
     }
 
     #[zbus(property)]
     async fn set_volume(&mut self, volume: f64) -> fdo::Result<()> {
         self.screen_reader
+            .lock()
+            .await
             .set_volume(volume)
             .await
             .map_err(to_zbus_fdo_error)
@@ -856,7 +868,7 @@ impl ScreenReader0 {
 
     #[zbus(property)]
     async fn mode(&self) -> u32 {
-        self.screen_reader.mode() as u32
+        self.screen_reader.lock().await.mode() as u32
     }
 
     #[zbus(property)]
@@ -870,6 +882,8 @@ impl ScreenReader0 {
             Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
         };
         self.screen_reader
+            .lock()
+            .await
             .set_mode(mode)
             .await
             .map_err(to_zbus_fdo_error)?;
@@ -877,8 +891,10 @@ impl ScreenReader0 {
     }
 
     #[zbus(property)]
-    async fn voice(&self) -> &str {
-        self.screen_reader.voice()
+    async fn voice(&self) -> String {
+        let guard = self.screen_reader.lock().await;
+        let voice = guard.voice().to_owned();
+        voice
     }
 
     #[zbus(property)]
@@ -888,6 +904,8 @@ impl ScreenReader0 {
         #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
         self.screen_reader
+            .lock()
+            .await
             .set_voice(voice)
             .await
             .map_err(to_zbus_fdo_error)?;
@@ -895,13 +913,19 @@ impl ScreenReader0 {
     }
 
     #[zbus(property)]
-    async fn voice_locales(&self) -> Vec<&str> {
-        self.screen_reader.get_voice_locales()
+    async fn voice_locales(&self) -> Vec<String> {
+        let guard = self.screen_reader.lock().await;
+        let locales = guard
+            .get_voice_locales()
+            .iter()
+            .map(|s| s.to_string()) // clone each &str into a String
+            .collect::<Vec<String>>();
+        locales
     }
 
     #[zbus(property)]
     async fn voices_for_locale(&self) -> HashMap<String, Vec<String>> {
-        self.screen_reader.get_voices().clone()
+        self.screen_reader.lock().await.get_voices().clone()
     }
 
     async fn trigger_action(&mut self, a: u32, timestamp: u64) -> fdo::Result<()> {
@@ -910,6 +934,152 @@ impl ScreenReader0 {
             Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
         };
         self.screen_reader
+            .lock()
+            .await
+            .trigger_action(action, timestamp)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+}
+
+impl ScreenReader1 {
+    async fn new(screen_reader: Arc<Mutex<OrcaManager<'static>>>) -> Result<ScreenReader1> {
+        Ok(ScreenReader1 { screen_reader })
+    }
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.ScreenReader1")]
+impl ScreenReader1 {
+    #[zbus(property)]
+    async fn enabled(&self) -> bool {
+        self.screen_reader.lock().await.enabled()
+    }
+
+    #[zbus(property)]
+    async fn set_enabled(&mut self, enabled: bool) -> fdo::Result<()> {
+        self.screen_reader
+            .lock()
+            .await
+            .set_enabled(enabled)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn rate(&self) -> f64 {
+        self.screen_reader.lock().await.rate()
+    }
+
+    #[zbus(property)]
+    async fn set_rate(&mut self, rate: f64) -> fdo::Result<()> {
+        self.screen_reader
+            .lock()
+            .await
+            .set_rate(rate)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn pitch(&self) -> f64 {
+        self.screen_reader.lock().await.pitch()
+    }
+
+    #[zbus(property)]
+    async fn set_pitch(&mut self, pitch: f64) -> fdo::Result<()> {
+        self.screen_reader
+            .lock()
+            .await
+            .set_pitch(pitch)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn volume(&self) -> f64 {
+        self.screen_reader.lock().await.volume()
+    }
+
+    #[zbus(property)]
+    async fn set_volume(&mut self, volume: f64) -> fdo::Result<()> {
+        self.screen_reader
+            .lock()
+            .await
+            .set_volume(volume)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn mode(&self) -> String {
+        self.screen_reader.lock().await.mode().to_string()
+    }
+
+    #[zbus(property)]
+    async fn set_mode(
+        &mut self,
+        m: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        let mode = match ScreenReaderMode::try_from(m) {
+            Ok(mode) => mode,
+            Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
+        };
+        self.screen_reader
+            .lock()
+            .await
+            .set_mode(mode)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.mode_changed(&ctx).await.map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn voice(&self) -> String {
+        let guard = self.screen_reader.lock().await;
+        let voice = guard.voice().to_owned();
+        voice
+    }
+
+    #[zbus(property)]
+    async fn set_voice(
+        &mut self,
+        voice: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        self.screen_reader
+            .lock()
+            .await
+            .set_voice(voice)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.voice_changed(&ctx).await.map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn voice_locales(&self) -> Vec<String> {
+        let guard = self.screen_reader.lock().await;
+        let locales = guard
+            .get_voice_locales()
+            .iter()
+            .map(|s| s.to_string()) // clone each &str into a String
+            .collect::<Vec<String>>();
+        locales
+    }
+
+    #[zbus(property)]
+    async fn voices_for_locale(&self) -> HashMap<String, Vec<String>> {
+        self.screen_reader.lock().await.get_voices().clone()
+    }
+
+    async fn trigger_action(&mut self, a: &str, timestamp: u64) -> fdo::Result<()> {
+        let action = match ScreenReaderAction::try_from(a) {
+            Ok(action) => action,
+            Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
+        };
+        self.screen_reader
+            .lock()
+            .await
             .trigger_action(action, timestamp)
             .await
             .map_err(to_zbus_fdo_error)
@@ -1365,7 +1535,10 @@ pub(crate) async fn create_interfaces(
         proxy: proxy.clone(),
         channel: daemon.clone(),
     };
-    let screen_reader = ScreenReader0::new(&session).await?;
+    let orca_manager = OrcaManager::new(&session).await?;
+    let screen_reader = Arc::new(Mutex::new(orca_manager));
+    let screen_reader0 = ScreenReader0::new(screen_reader.clone()).await?;
+    let screen_reader1 = ScreenReader1::new(screen_reader).await?;
     let session_management = SessionManagement1 {
         proxy: proxy.clone(),
         manager: SessionManager::new(session.clone(), &system, daemon).await?,
@@ -1452,7 +1625,8 @@ pub(crate) async fn create_interfaces(
     if session_management.manager.current_login_mode().await? == LoginMode::Game
         && try_exists(path("/usr/bin/orca")).await?
     {
-        object_server.at(MANAGER_PATH, screen_reader).await?;
+        object_server.at(MANAGER_PATH, screen_reader0).await?;
+        object_server.at(MANAGER_PATH, screen_reader1).await?;
     }
 
     if is_session_managed().await? {
