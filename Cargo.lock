@@ -1195,6 +1195,7 @@ dependencies = [
  "serde",
  "serde_json",
  "speech-dispatcher",
+ "steamos-manager-macros",
  "steamos-manager-proxy",
  "strum",
  "sysinfo",
@@ -1209,6 +1210,15 @@ dependencies = [
  "xdg",
  "zbus",
  "zbus_xml",
+]
+
+[[package]]
+name = "steamos-manager-macros"
+version = "25.9.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

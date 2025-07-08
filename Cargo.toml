@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["steamos-manager", "steamos-manager-proxy"]
+members = ["steamos-manager", "steamos-manager-macros", "steamos-manager-proxy"]
 
 [profile.release]
 strip="symbols"
