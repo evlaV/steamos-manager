@@ -13,7 +13,7 @@ use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
 use tracing::{error, warn};
-use zbus::object_server::SignalEmitter;
+use zbus::object_server::{Interface, SignalEmitter};
 use zbus::proxy::{Builder, CacheProperties};
 use zbus::zvariant::Fd;
 use zbus::{fdo, interface, zvariant, Connection, ObjectServer, Proxy};
@@ -104,6 +104,10 @@ macro_rules! setter {
             .await
             .map_err(|e| zbus::Error::FDO(Box::new(e)))
     };
+}
+
+trait RemoteInterface {
+    type Remote: Interface;
 }
 
 struct SteamOSManager {
