@@ -32,6 +32,7 @@ mod systemd;
 mod udev;
 mod uinput;
 
+pub mod audio;
 pub mod cec;
 pub mod daemon;
 pub mod gpu;

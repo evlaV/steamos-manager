@@ -18,6 +18,7 @@ use zbus::proxy::{Builder, CacheProperties};
 use zbus::zvariant::Fd;
 use zbus::{fdo, interface, zvariant, Connection, ObjectServer, Proxy};
 
+use crate::audio::{AudioManager, Mode};
 use crate::cec::{HdmiCecControl, HdmiCecState};
 use crate::daemon::user::Command;
 use crate::daemon::DaemonCommand;
@@ -108,6 +109,10 @@ macro_rules! setter {
 struct SteamOSManager {
     proxy: Proxy<'static>,
     _job_manager: UnboundedSender<JobManagerCommand>,
+}
+
+struct AudioManager1 {
+    manager: AudioManager,
 }
 
 struct AmbientLightSensor1 {
@@ -269,6 +274,34 @@ impl SteamOSManager {
     ) -> zbus::Result<()> {
         let _: () = self.proxy.call("SetWifiBackend", &(backend)).await?;
         self.wifi_backend_changed(&ctx).await
+    }
+}
+
+impl AudioManager1 {
+    async fn new() -> Result<AudioManager1> {
+        let manager = AudioManager::new().await;
+        Ok(AudioManager1 { manager })
+    }
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.Audio1")]
+impl AudioManager1 {
+    #[zbus(property)]
+    async fn mode(&self) -> fdo::Result<String> {
+        let mode = self.manager.mode();
+        match mode {
+            Some(mode) => Ok(mode.to_string()),
+            _ => Err(fdo::Error::Failed(String::from("Unknown audio mode"))),
+        }
+    }
+
+    #[zbus(property)]
+    async fn set_mode(&mut self, m: &str) -> fdo::Result<()> {
+        let mode = match Mode::try_from(m) {
+            Ok(mode) => mode,
+            Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
+        };
+        self.manager.set_mode(mode).await.map_err(to_zbus_fdo_error)
     }
 }
 
@@ -1205,6 +1238,7 @@ pub(crate) async fn create_interfaces(
 
     let manager = SteamOSManager::new(system.clone(), proxy.clone(), job_manager.clone()).await?;
 
+    let audio_manager = AudioManager1::new().await?;
     let als = AmbientLightSensor1 {
         proxy: proxy.clone(),
     };
@@ -1296,6 +1330,10 @@ pub(crate) async fn create_interfaces(
     }
 
     object_server.at(MANAGER_PATH, manager2).await?;
+
+    if AudioManager::is_supported().await? {
+        object_server.at(MANAGER_PATH, audio_manager).await?;
+    }
 
     if session_management.manager.current_login_mode().await? == LoginMode::Game
         && try_exists(path("/usr/bin/orca")).await?

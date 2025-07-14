@@ -11,15 +11,17 @@ use itertools::Itertools;
 use nix::time::{clock_gettime, ClockId};
 use std::collections::HashMap;
 use std::io::Cursor;
+use steamos_manager::audio::Mode;
 use steamos_manager::cec::HdmiCecState;
 use steamos_manager::hardware::{FactoryResetKind, FanControlState};
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
-    AmbientLightSensor1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy, CpuScaling1Proxy,
-    FactoryReset1Proxy, FanControl1Proxy, GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy,
-    HdmiCec1Proxy, LowPowerMode1Proxy, Manager2Proxy, PerformanceProfile1Proxy, ScreenReader0Proxy,
-    SessionManagement1Proxy, Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
-    WifiDebug1Proxy, WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
+    AmbientLightSensor1Proxy, Audio1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy,
+    CpuScaling1Proxy, FactoryReset1Proxy, FanControl1Proxy, GpuPerformanceLevel1Proxy,
+    GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy, Manager2Proxy,
+    PerformanceProfile1Proxy, ScreenReader0Proxy, SessionManagement1Proxy, Storage1Proxy,
+    TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiDebug1Proxy, WifiDebugDump1Proxy,
+    WifiPowerManagement1Proxy,
 };
 use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
@@ -42,6 +44,15 @@ enum Commands {
 
     /// Get luminance sensor calibration gain
     GetAlsCalibrationGain,
+
+    /// Get Audio Mode
+    GetAudioMode,
+
+    /// Set Audio Mode
+    SetAudioMode {
+        /// Valid options are 'mono', 'stereo'
+        mode: Mode,
+    },
 
     /// Set the fan control state
     SetFanControlState {
@@ -395,6 +406,15 @@ async fn main() -> Result<()> {
             let gain = proxy.als_calibration_gain().await?;
             let gains = gain.into_iter().map(|g| g.to_string()).join(", ");
             println!("ALS calibration gain: {gains}");
+        }
+        Commands::GetAudioMode => {
+            let proxy = Audio1Proxy::new(&conn).await?;
+            let mode = proxy.mode().await?;
+            println!("Audio mode: {mode}");
+        }
+        Commands::SetAudioMode { mode } => {
+            let proxy = Audio1Proxy::new(&conn).await?;
+            proxy.set_mode(mode.to_string().as_str()).await?;
         }
         Commands::SetFanControlState { state } => {
             let proxy = FanControl1Proxy::new(&conn).await?;

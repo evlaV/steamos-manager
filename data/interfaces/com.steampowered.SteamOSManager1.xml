@@ -12,6 +12,22 @@
 
 <node name="/" xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
   <!--
+      com.steampowered.SteamOSManager1.Audio1
+      @short_description: Optional interface to manipulate audio properties
+      features.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.Audio1">
+
+    <!--
+        Mode:
+
+        The audio mode. Either 'mono' or 'stereo'.
+    -->
+    <property name="Mode" type="s" access="readwrite"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.AmbientLightSensor1
       @short_description: Optional interface to interact with the built-in
       ambient light sensor.
