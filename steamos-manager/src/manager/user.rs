@@ -406,7 +406,7 @@ impl BatteryChargeLimit1 {
 
     #[zbus(property(emits_changed_signal = "const"))]
     async fn suggested_minimum_limit(&self) -> i32 {
-        let Ok(Some(ref config)) = device_config().await else {
+        let Ok(Some(config)) = device_config().await else {
             return BatteryChargeLimit1::DEFAULT_SUGGESTED_MINIMUM_LIMIT;
         };
         let Some(ref config) = config.battery_charge_limit else {

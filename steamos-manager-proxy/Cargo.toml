@@ -1,7 +1,7 @@
 [package]
 name = "steamos-manager-proxy"
 version = "25.11.0"
-edition = "2021"
+edition = "2024"
 repository = "https://gitlab.steamos.cloud/holo/steamos-manager/"
 
 [dependencies]
