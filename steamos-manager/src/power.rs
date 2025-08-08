@@ -465,23 +465,38 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
             "Invalid limit"
         );
 
-        let limit = limit.to_string();
         let base = path(Self::PREFIX).join(&self.attribute).join("attributes");
+
+        let sppt_min = fs::read_to_string(base.join(Self::SPPT_SUFFIX).join("min_value"))
+            .await
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let fppt_min = fs::read_to_string(base.join(Self::FPPT_SUFFIX).join("min_value"))
+            .await
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+
+        let spl_value = limit;
+        let sppt_value = limit.max(sppt_min);
+        let fppt_value = limit.max(fppt_min);
+
         write_synced(
             base.join(Self::SPL_SUFFIX).join("current_value"),
-            limit.as_bytes(),
+            spl_value.to_string().as_bytes(),
         )
         .await
         .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
         write_synced(
             base.join(Self::SPPT_SUFFIX).join("current_value"),
-            limit.as_bytes(),
+            sppt_value.to_string().as_bytes(),
         )
         .await
         .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
         write_synced(
             base.join(Self::FPPT_SUFFIX).join("current_value"),
-            limit.as_bytes(),
+            fppt_value.to_string().as_bytes(),
         )
         .await
         .inspect_err(|message| error!("Error writing to sysfs file: {message}"))
