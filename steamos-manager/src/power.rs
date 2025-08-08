@@ -1444,6 +1444,12 @@ pub(crate) mod test {
         write_synced(spl_base.join("max_value"), b"20\n")
             .await
             .unwrap();
+        write_synced(sppt_base.join("min_value"), b"8\n")
+            .await
+            .unwrap();
+        write_synced(fppt_base.join("min_value"), b"9\n")
+            .await
+            .unwrap();
 
         let platform_profile_base = path(PLATFORM_PROFILE_PREFIX).join("platform-profile0");
         create_dir_all(&platform_profile_base).await.unwrap();
@@ -1483,8 +1489,29 @@ pub(crate) mod test {
         manager.set_tdp_limit(25).await.unwrap_err();
         assert_eq!(manager.get_tdp_limit().await.unwrap(), 15);
 
+        manager.set_tdp_limit(7).await.unwrap();
+        assert_eq!(manager.get_tdp_limit().await.unwrap(), 7);
+        assert_eq!(
+            read_to_string(spl_base.join("current_value"))
+                .await
+                .unwrap(),
+            "7"
+        );
+        assert_eq!(
+            read_to_string(sppt_base.join("current_value"))
+                .await
+                .unwrap(),
+            "8"
+        );
+        assert_eq!(
+            read_to_string(fppt_base.join("current_value"))
+                .await
+                .unwrap(),
+            "9"
+        );
+
         manager.set_tdp_limit(2).await.unwrap_err();
-        assert_eq!(manager.get_tdp_limit().await.unwrap(), 15);
+        assert_eq!(manager.get_tdp_limit().await.unwrap(), 7);
 
         write_synced(platform_profile_base.join("profile"), b"balanced\n")
             .await
@@ -1535,6 +1562,12 @@ pub(crate) mod test {
         write_synced(spl_base.join("max_value"), b"20\n")
             .await
             .unwrap();
+        write_synced(sppt_base.join("min_value"), b"8\n")
+            .await
+            .unwrap();
+        write_synced(fppt_base.join("min_value"), b"9\n")
+            .await
+            .unwrap();
 
         let manager = tdp_limit_manager().await.unwrap();
 
@@ -1565,7 +1598,28 @@ pub(crate) mod test {
         manager.set_tdp_limit(25).await.unwrap_err();
         assert_eq!(manager.get_tdp_limit().await.unwrap(), 15);
 
+        manager.set_tdp_limit(7).await.unwrap();
+        assert_eq!(manager.get_tdp_limit().await.unwrap(), 7);
+        assert_eq!(
+            read_to_string(spl_base.join("current_value"))
+                .await
+                .unwrap(),
+            "7"
+        );
+        assert_eq!(
+            read_to_string(sppt_base.join("current_value"))
+                .await
+                .unwrap(),
+            "8"
+        );
+        assert_eq!(
+            read_to_string(fppt_base.join("current_value"))
+                .await
+                .unwrap(),
+            "9"
+        );
+
         manager.set_tdp_limit(2).await.unwrap_err();
-        assert_eq!(manager.get_tdp_limit().await.unwrap(), 15);
+        assert_eq!(manager.get_tdp_limit().await.unwrap(), 7);
     }
 }
