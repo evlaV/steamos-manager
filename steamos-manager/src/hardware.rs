@@ -531,6 +531,63 @@ pub mod test {
     }
 
     #[tokio::test]
+    async fn board_lookup_msi_claw_a1m() {
+        let _h = setup_board(
+            "Micro-Star International Co., Ltd.\n",
+            "INVALID\n",
+            "Claw A1M\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("claw"), String::from("Claw A1M"))
+        );
+    }
+
+    #[tokio::test]
+    async fn board_lookup_msi_claw7_a2vm() {
+        let _h = setup_board(
+            "Micro-Star International Co., Ltd.\n",
+            "INVALID\n",
+            "Claw 7 AI+ A2VM\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("claw"), String::from("Claw 7 AI+ A2VM"))
+        );
+    }
+
+    #[tokio::test]
+    async fn board_lookup_msi_claw8_a2vm() {
+        let _h = setup_board(
+            "Micro-Star International Co., Ltd.\n",
+            "INVALID\n",
+            "Claw 8 AI+ A2VM\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("claw"), String::from("Claw 8 AI+ A2VM"))
+        );
+    }
+
+    #[tokio::test]
     async fn board_lookup_steam_deck_jupiter() {
         let _h = setup_board("Valve\n", "Jupiter\n", "Jupiter\n")
             .await

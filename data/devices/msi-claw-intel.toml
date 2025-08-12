@@ -1,0 +1,23 @@
+[[device]]
+dmi.sys_vendor = "Micro-Star International Co., Ltd."
+dmi.product_name = "Claw A1M"
+device = "claw"
+variant = "Claw A1M"
+
+[[device]]
+dmi.sys_vendor = "Micro-Star International Co., Ltd."
+dmi.product_name = "Claw 7 AI+ A2VM"
+device = "claw"
+variant = "Claw 7 AI+ A2VM"
+
+[[device]]
+dmi.sys_vendor = "Micro-Star International Co., Ltd."
+dmi.product_name = "Claw 8 AI+ A2VM"
+device = "claw"
+variant = "Claw 8 AI+ A2VM"
+
+[gpu_performance]
+driver = "intel"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard"]
