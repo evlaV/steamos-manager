@@ -456,7 +456,7 @@ mod test {
                 _ => bail!("Unknown query"),
             }
         }
-        h.test.process_cb.set(process_output);
+        h.test.set_process_cb(process_output).await;
 
         assert_eq!(
             get_wifi_power_management_state().await.expect("get"),
@@ -492,7 +492,7 @@ mod test {
                 _ => bail!("Unknown query"),
             }
         }
-        h.test.process_cb.set(process_output);
+        h.test.set_process_cb(process_output).await;
 
         assert_eq!(
             get_wifi_power_management_state().await.expect("get"),
@@ -517,7 +517,7 @@ mod test {
                 _ => bail!("Unknown query"),
             }
         }
-        h.test.process_cb.set(process_output);
+        h.test.set_process_cb(process_output).await;
 
         assert_eq!(
             get_wifi_power_management_state().await.expect("get"),
@@ -572,7 +572,7 @@ mod test {
             std::fs::write(args[2], b"output").unwrap();
             Ok((0, String::new()))
         }
-        h.test.process_cb.set(process_output);
+        h.test.set_process_cb(process_output).await;
 
         let pathbuf = extract_wifi_trace().await.unwrap();
 

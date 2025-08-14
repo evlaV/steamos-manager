@@ -223,7 +223,7 @@ pub(crate) async fn platform_config() -> Result<&'static Option<PlatformConfig>>
 #[cfg(test)]
 pub(crate) async fn platform_config() -> Result<Option<PlatformConfig>> {
     let test = crate::testing::current();
-    let config = test.platform_config.borrow().clone();
+    let config = (*test.platform_config.lock().await).clone();
     Ok(config)
 }
 
