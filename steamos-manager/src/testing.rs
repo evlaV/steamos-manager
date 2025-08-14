@@ -2,15 +2,14 @@ use anyhow::{anyhow, bail, Result};
 use libc::pid_t;
 use nix::sys::signal;
 use nix::unistd::Pid;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::iter::zip;
 use std::path::Path;
 use std::process::Stdio;
-use std::rc::Rc;
 use std::str::FromStr;
-use std::sync::Once;
+use std::sync::{self, Arc, Once};
 use std::time::Duration;
 use tempfile::{tempdir, TempDir};
 use tokio::fs::read;
@@ -33,7 +32,7 @@ use crate::platform::PlatformConfig;
 static INIT: Once = Once::new();
 
 thread_local! {
-    static TEST: RefCell<Option<Rc<Test>>> = const { RefCell::new(None) };
+    static TEST: RefCell<Option<Arc<Test>>> = const { RefCell::new(None) };
 }
 
 #[macro_export]
@@ -78,13 +77,13 @@ pub fn start() -> TestHandle {
                 .with(EnvFilter::from_default_env());
             let _ = set_global_default(subscriber);
         });
-        let test: Rc<Test> = Rc::new(Test {
+        let test: Arc<Test> = Arc::new(Test {
             base: tempdir().expect("Couldn't create test directory"),
-            process_cb: Cell::new(|_, _| Err(anyhow!("No current process_cb"))),
-            mock_dbus: Cell::new(None),
+            process_cb: Mutex::new(|_, _| Err(anyhow!("No current process_cb"))),
+            mock_dbus: sync::Mutex::new(None),
             dbus_address: Mutex::new(None),
-            platform_config: RefCell::new(None),
-            device_config: RefCell::new(None),
+            platform_config: Mutex::new(None),
+            device_config: Mutex::new(None),
         });
         *lock.borrow_mut() = Some(test.clone());
         TestHandle { test }
@@ -95,14 +94,14 @@ pub fn stop() {
     TEST.with(|lock| {
         let test = (*lock.borrow_mut()).take();
         if let Some(test) = test {
-            if let Some(mock_dbus) = test.mock_dbus.take() {
+            if let Some(mock_dbus) = test.mock_dbus.lock().unwrap().take() {
                 let _ = mock_dbus.shutdown();
             }
         }
     });
 }
 
-pub fn current() -> Rc<Test> {
+pub fn current() -> Arc<Test> {
     TEST.with(|lock| lock.borrow().as_ref().unwrap().clone())
 }
 
@@ -114,15 +113,15 @@ pub struct MockDBus {
 
 pub struct Test {
     base: TempDir,
-    pub process_cb: Cell<fn(&OsStr, &[&OsStr]) -> Result<(i32, String)>>,
-    pub mock_dbus: Cell<Option<MockDBus>>,
+    pub process_cb: Mutex<fn(&OsStr, &[&OsStr]) -> Result<(i32, String)>>,
+    pub mock_dbus: sync::Mutex<Option<MockDBus>>,
     pub dbus_address: Mutex<Option<Address>>,
-    pub platform_config: RefCell<Option<PlatformConfig>>,
-    pub device_config: RefCell<Option<DeviceConfig>>,
+    pub platform_config: Mutex<Option<PlatformConfig>>,
+    pub device_config: Mutex<Option<DeviceConfig>>,
 }
 
 pub struct TestHandle {
-    pub test: Rc<Test>,
+    pub test: Arc<Test>,
 }
 
 impl MockDBus {
@@ -134,6 +133,7 @@ impl MockDBus {
                 "--config-file=../data/test-dbus.conf",
             ])
             .stdout(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()?;
 
         let stdout = BufReader::new(
@@ -184,14 +184,37 @@ impl Test {
     pub fn path(&self) -> &Path {
         self.base.path()
     }
+
+    pub async fn set_device_config(&self, config: DeviceConfig) {
+        *self.device_config.lock().await = Some(config);
+    }
+
+    pub async fn clear_device_config(&self) {
+        *self.device_config.lock().await = None;
+    }
+
+    pub async fn set_platform_config(&self, config: PlatformConfig) {
+        *self.platform_config.lock().await = Some(config);
+    }
+
+    pub async fn clear_platform_config(&self) {
+        *self.platform_config.lock().await = None;
+    }
+
+    pub async fn set_process_cb(&self, process_cb: fn(&OsStr, &[&OsStr]) -> Result<(i32, String)>) {
+        *self.process_cb.lock().await = process_cb;
+    }
 }
 
 impl TestHandle {
     pub async fn new_dbus(&mut self) -> Result<Connection> {
+        if let Some(ref dbus) = *self.test.mock_dbus.lock().unwrap() {
+            return Ok(dbus.connection.clone());
+        }
         let dbus = MockDBus::new().await?;
         let connection = dbus.connection.clone();
         *self.test.dbus_address.lock().await = Some(dbus.address.clone());
-        self.test.mock_dbus.set(Some(dbus));
+        *self.test.mock_dbus.lock().unwrap() = Some(dbus);
         Ok(connection)
     }
 

@@ -970,7 +970,7 @@ pub(crate) mod test {
             download_mode_limit: None,
             firmware_attribute: None,
         });
-        handle.test.device_config.replace(Some(config));
+        handle.test.set_device_config(config).await;
         let manager = tdp_limit_manager().await.unwrap();
 
         setup().await.expect("setup");
@@ -995,7 +995,7 @@ pub(crate) mod test {
             download_mode_limit: None,
             firmware_attribute: None,
         });
-        handle.test.device_config.replace(Some(config));
+        handle.test.set_device_config(config).await;
         let manager = tdp_limit_manager().await.unwrap();
 
         assert_eq!(
@@ -1237,7 +1237,7 @@ pub(crate) mod test {
             hwmon_name: String::from("steamdeck_hwmon"),
             attribute: String::from("max_battery_charge_level"),
         });
-        handle.test.device_config.replace(Some(config));
+        handle.test.set_device_config(config).await;
 
         let base = path(HWMON_PREFIX).join("hwmon6");
         create_dir_all(&base).await.expect("create_dir_all");
@@ -1338,7 +1338,7 @@ pub(crate) mod test {
             download_mode_limit: NonZeroU32::new(6),
             firmware_attribute: None,
         });
-        h.test.device_config.replace(Some(config));
+        h.test.set_device_config(config).await;
         let manager = tdp_limit_manager().await.unwrap();
 
         connection
@@ -1434,7 +1434,7 @@ pub(crate) mod test {
             download_mode_limit: None,
             firmware_attribute: None,
         });
-        h.test.device_config.replace(Some(config));
+        h.test.set_device_config(config).await;
         let manager = tdp_limit_manager().await.unwrap();
 
         connection
@@ -1503,7 +1503,7 @@ pub(crate) mod test {
                 performance_profile: Some(String::from("custom")),
             }),
         });
-        h.test.device_config.replace(Some(config));
+        h.test.set_device_config(config).await;
 
         let attributes_base = path(FirmwareAttributeLimitManager::PREFIX)
             .join("tdp0")
@@ -1621,7 +1621,7 @@ pub(crate) mod test {
                 performance_profile: None,
             }),
         });
-        h.test.device_config.replace(Some(config));
+        h.test.set_device_config(config).await;
 
         let attributes_base = path(FirmwareAttributeLimitManager::PREFIX)
             .join("tdp0")
