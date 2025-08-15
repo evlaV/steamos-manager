@@ -18,7 +18,7 @@ Some of the features that SteamOS Manager enables include:
   - Steam geneally performs device enumeration via UDisks2, but formatting
 	happens via SteamOSManager
 
-For a full list of features please refer to the [interface specification](https://gitlab.steamos.cloud/holo/steamos-manager/-/blob/master/com.steampowered.SteamOSManager1.xml).
+For a full list of features please refer to the [interface specification](https://gitlab.steamos.cloud/holo/steamos-manager/-/blob/master/data/interfaces/com.steampowered.SteamOSManager1.xml).
 
 Other notable dbus interfaces used by the Steam Client include:
 - org.freedesktop.UDisks2
