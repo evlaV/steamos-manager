@@ -150,7 +150,10 @@ impl MockDBus {
             .ok_or(anyhow!("Failed to read address"))?;
 
         let address = Address::from_str(address.trim_end())?;
-        let connection = Builder::address(address.clone())?.build().await?;
+        let connection = Builder::address(address.clone())?
+            .name("com.steampowered.TestDaemon")?
+            .build()
+            .await?;
 
         Ok(MockDBus {
             connection,
@@ -220,6 +223,14 @@ impl TestHandle {
 
     pub async fn dbus_address(&self) -> Option<Address> {
         (*self.test.dbus_address.lock().await).clone()
+    }
+
+    pub async fn new_connection(&self) -> Result<Connection> {
+        Ok(
+            Builder::address(self.dbus_address().await.ok_or(anyhow!("No address"))?)?
+                .build()
+                .await?,
+        )
     }
 }
 

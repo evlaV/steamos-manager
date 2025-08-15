@@ -529,6 +529,7 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                 .unwrap_or(var.clone())
         })
         .collect();
+    let iface_str: Vec<String> = iface.iter().map(ToString::to_string).collect();
 
     let tokens = quote! {
         impl #name {
@@ -657,7 +658,10 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
 
         #[derive(Clone, Default, Deserialize, Debug)]
         pub(crate) struct #config_name {
-            #(#stripped_vars: Option<RemoteInterfaceConfig>,)*
+            #(
+                #[serde(rename = #iface_str)]
+                #stripped_vars: Option<RemoteInterfaceConfig>,
+            )*
         }
 
         impl #config_name {

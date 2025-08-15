@@ -356,7 +356,27 @@
   </interface>
 
   <!--
-      com.steampowered.SteamOSManager1.ScreenReader0
+      com.steampowered.SteamOSManager1.RemoteInterface1
+      @short_description: Interface for handling "remote" interfaces.
+
+      Remote interfaces are implementations of specific interfaces that SteamOS
+      Manager defines but are implemented in other processes. SteamOS Manager
+      will relay bus communications to those remote processes so there can
+      still be a central bus name for them.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.RemoteInterface1">
+
+    <!--
+        RemoteInterfaces:
+
+        A list of interfaces that are being relayed.
+    -->
+    <property name="RemoteInterfaces" type="as" access="read"/>
+
+  </interface>
+
+  <!--
+      com.steampowered.SteamOSManager1.ScreenReader1
       @short_description: Optional interface for managing a screen reader.
 
       This interface is considered unstable and may change between verisons.
