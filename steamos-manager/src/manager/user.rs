@@ -19,7 +19,7 @@ use tracing::{debug, error, warn};
 use zbus::fdo::{self, DBusProxy};
 use zbus::message::Header;
 use zbus::names::{BusName, UniqueName};
-use zbus::object_server::{Interface, InterfaceRef, SignalEmitter};
+use zbus::object_server::{Interface, SignalEmitter};
 use zbus::proxy::{Builder, CacheProperties};
 use zbus::zvariant::{Fd, ObjectPath};
 use zbus::{interface, zvariant, Connection, ObjectServer, Proxy};
@@ -39,7 +39,7 @@ use crate::hardware::{
     device_config, device_type, device_variant, steam_deck_variant, SteamDeckVariant,
 };
 use crate::job::JobManagerCommand;
-use crate::manager::{RemoteInterface, RemoteInterfaceConfig};
+use crate::manager::{RemoteInterface, RemoteInterfaceConfig, RemoteOwner};
 use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
@@ -198,20 +198,23 @@ struct PerformanceProfile1 {
     tdp_limit_manager: Option<UnboundedSender<TdpManagerCommand>>,
 }
 
-#[derive(Default, RemoteManager)]
+#[derive(RemoteManager)]
 struct RemoteInterface1 {
+    session: Connection,
+    system: Connection,
+
     #[remote]
-    remote_battery_charge_limit1: Option<InterfaceRef<BatteryChargeLimit1Remote>>,
+    remote_battery_charge_limit1: Option<BatteryChargeLimit1RemoteOwner>,
     #[remote]
-    remote_factory_reset1: Option<InterfaceRef<FactoryReset1Remote>>,
+    remote_factory_reset1: Option<FactoryReset1RemoteOwner>,
     #[remote]
-    remote_fan_control1: Option<InterfaceRef<FanControl1Remote>>,
+    remote_fan_control1: Option<FanControl1RemoteOwner>,
     #[remote]
-    remote_gpu_performance_level1: Option<InterfaceRef<GpuPerformanceLevel1Remote>>,
+    remote_gpu_performance_level1: Option<GpuPerformanceLevel1RemoteOwner>,
     #[remote]
-    remote_gpu_power_profile1: Option<InterfaceRef<GpuPowerProfile1Remote>>,
+    remote_gpu_power_profile1: Option<GpuPowerProfile1RemoteOwner>,
     #[remote]
-    remote_performance_profile1: Option<InterfaceRef<PerformanceProfile1Remote>>,
+    remote_performance_profile1: Option<PerformanceProfile1RemoteOwner>,
 }
 
 struct ScreenReader0 {
@@ -837,6 +840,21 @@ impl PerformanceProfile1 {
     }
 }
 
+impl RemoteInterface1 {
+    fn new(session: Connection, system: Connection) -> RemoteInterface1 {
+        RemoteInterface1 {
+            session,
+            system,
+            remote_battery_charge_limit1: None,
+            remote_factory_reset1: None,
+            remote_fan_control1: None,
+            remote_gpu_performance_level1: None,
+            remote_gpu_power_profile1: None,
+            remote_performance_profile1: None,
+        }
+    }
+}
+
 impl ScreenReader0 {
     async fn new(screen_reader: Arc<Mutex<OrcaManager<'static>>>) -> Result<ScreenReader0> {
         Ok(ScreenReader0 { screen_reader })
@@ -1419,6 +1437,24 @@ impl WifiPowerManagement1 {
     }
 }
 
+async fn register<I: RemoteInterface + Interface>(
+    object_server: &ObjectServer,
+    remote: I::Remote,
+) -> fdo::Result<bool> {
+    if object_server.interface::<_, I>(MANAGER_PATH).await.is_ok() {
+        return Ok(false);
+    }
+    if object_server
+        .interface::<_, <I as RemoteInterface>::Remote>(MANAGER_PATH)
+        .await
+        .is_ok()
+    {
+        return Ok(false);
+    }
+
+    Ok(object_server.at(MANAGER_PATH, remote).await?)
+}
+
 impl Service for SignalRelayService {
     const NAME: &'static str = "signal-relay";
 
@@ -1679,7 +1715,7 @@ pub(crate) async fn create_interfaces(
         channel: daemon.clone(),
     };
 
-    let mut remote_interface = RemoteInterface1::default();
+    let mut remote_interface = RemoteInterface1::new(session.clone(), system.clone());
     let remote_config = RemoteInterface1Config::load().await?;
 
     let session_management = SessionManagement1 {
@@ -1819,7 +1855,7 @@ pub(crate) async fn create_interfaces(
             .await?;
     }
 
-    remote_interface.configure(&system, &remote_config).await?;
+    remote_interface.configure(&remote_config).await?;
     object_server.at(MANAGER_PATH, remote_interface).await?;
 
     Ok((
@@ -1864,11 +1900,12 @@ mod test {
     use tokio::time::sleep;
     use zbus::object_server::Interface;
 
-    struct TestHandle {
+    struct TestHandle<S: TestSetup> {
         handle: testing::TestHandle,
         connection: Connection,
         _rx_job: UnboundedReceiver<JobManagerCommand>,
         rx_tdp: Option<UnboundedReceiver<TdpManagerCommand>>,
+        setup: S,
     }
 
     #[async_trait]
@@ -1967,7 +2004,7 @@ mod test {
         })
     }
 
-    async fn start<T: TestSetup + Sync + Send>(mut config: TestConfig<T>) -> Result<TestHandle> {
+    async fn start<S: TestSetup + Sync + Send>(mut config: TestConfig<S>) -> Result<TestHandle<S>> {
         let mut handle = testing::start();
         let (tx_ctx, mut rx_ctx) = channel::<UserContext>();
         let (tx_job, rx_job) = unbounded_channel::<JobManagerCommand>();
@@ -2066,6 +2103,7 @@ mod test {
             connection,
             _rx_job: rx_job,
             rx_tdp,
+            setup: config.setup,
         })
     }
 
@@ -2529,8 +2567,8 @@ mod test {
                     &<I as Interface>::name(),
                     ObjectPath::try_from("/foo")?,
                     &BusName::Unique(new_conn.unique_name().unwrap().to_owned().into()),
-                    connection,
                     Some(signal_emitter),
+                    true,
                 )
                 .await?
         );
@@ -2553,16 +2591,16 @@ mod test {
             .unregister(
                 &<I as Interface>::name(),
                 Some(new_conn.unique_name().unwrap()),
-                &connection,
                 signal_emitter,
+                false,
             )
             .await?;
 
         Ok(())
     }
 
-    async fn test_remote_interface_added<I: RemoteInterface + Interface>(
-        test: &TestHandle,
+    async fn test_remote_interface_added<I: RemoteInterface + Interface, S: TestSetup>(
+        test: &TestHandle<S>,
         new_conn: &Connection,
     ) -> Result<()> {
         let proxy = RemoteInterface1Proxy::builder(&new_conn)
@@ -2574,18 +2612,18 @@ mod test {
             .build()
             .await?;
 
-        ensure!(test_remote_interface_missing::<I>(&proxy, test).await?);
+        ensure!(test_remote_interface_missing::<I, _>(&proxy, test).await?);
 
         register_remote::<I>(&test.connection, new_conn).await?;
 
-        ensure!(!test_remote_interface_missing::<I>(&proxy, test).await?);
+        ensure!(!test_remote_interface_missing::<I, _>(&proxy, test).await?);
 
         Ok(())
     }
 
-    async fn test_remote_interface_missing<I: RemoteInterface + Interface>(
+    async fn test_remote_interface_missing<I: RemoteInterface + Interface, S: TestSetup>(
         proxy: &RemoteInterface1Proxy<'_>,
-        test: &TestHandle,
+        test: &TestHandle<S>,
     ) -> Result<bool> {
         Ok(!proxy
             .remote_interfaces()
@@ -2599,7 +2637,7 @@ mod test {
         let test = start(TestConfig::none()).await.unwrap();
 
         let new_conn = test.handle.new_connection().await.unwrap();
-        test_remote_interface_added::<BatteryChargeLimit1>(&test, &new_conn)
+        test_remote_interface_added::<BatteryChargeLimit1, _>(&test, &new_conn)
             .await
             .unwrap();
 
@@ -2612,7 +2650,7 @@ mod test {
             .unwrap();
 
         assert!(
-            !test_remote_interface_missing::<BatteryChargeLimit1>(&proxy, &test)
+            !test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
                 .await
                 .unwrap()
         );
@@ -2623,7 +2661,7 @@ mod test {
         let test = start(TestConfig::none()).await.unwrap();
 
         let new_conn = test.handle.new_connection().await.unwrap();
-        test_remote_interface_added::<BatteryChargeLimit1>(&test, &new_conn)
+        test_remote_interface_added::<BatteryChargeLimit1, _>(&test, &new_conn)
             .await
             .unwrap();
 
@@ -2638,7 +2676,7 @@ mod test {
             .unwrap();
 
         assert!(
-            test_remote_interface_missing::<BatteryChargeLimit1>(&proxy, &test)
+            test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
                 .await
                 .unwrap()
         );
@@ -2649,7 +2687,7 @@ mod test {
         let test = start(TestConfig::none()).await.unwrap();
 
         let new_conn = test.handle.new_connection().await.unwrap();
-        test_remote_interface_added::<BatteryChargeLimit1>(&test, &new_conn)
+        test_remote_interface_added::<BatteryChargeLimit1, _>(&test, &new_conn)
             .await
             .unwrap();
 
@@ -2665,7 +2703,7 @@ mod test {
             .unwrap();
 
         assert!(
-            test_remote_interface_missing::<BatteryChargeLimit1>(&proxy, &test)
+            test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
                 .await
                 .unwrap()
         );
@@ -2676,7 +2714,7 @@ mod test {
         let test = start(TestConfig::none()).await.unwrap();
 
         let new_conn = test.handle.new_connection().await.unwrap();
-        test_remote_interface_added::<BatteryChargeLimit1>(&test, &new_conn)
+        test_remote_interface_added::<BatteryChargeLimit1, _>(&test, &new_conn)
             .await
             .unwrap();
 
@@ -2695,7 +2733,7 @@ mod test {
         );
 
         assert!(
-            !test_remote_interface_missing::<BatteryChargeLimit1>(&proxy, &test)
+            !test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
                 .await
                 .unwrap()
         );
@@ -2704,18 +2742,65 @@ mod test {
     struct RemoteSetup {
         configs: i32,
         name: &'static str,
+        remotes: Vec<Connection>,
     }
 
     impl RemoteSetup {
         fn new(name: &'static str, configs: i32) -> RemoteSetup {
-            RemoteSetup { configs, name }
+            RemoteSetup {
+                configs,
+                name,
+                remotes: Vec::new(),
+            }
+        }
+
+        async fn setup_remotes(
+            &mut self,
+            handle: &testing::TestHandle,
+            connection: &Connection,
+        ) -> Result<()> {
+            let new_conn = handle.new_connection().await?;
+            new_conn.request_name("com.steampowered.TestDaemon").await?;
+            self.remotes.push(new_conn);
+            if self.configs > 0 {
+                for c in 1..self.configs {
+                    let new_conn = handle.new_connection().await?;
+                    new_conn
+                        .request_name(format!("com.steampowered.TestDaemon{c}"))
+                        .await?;
+                    self.remotes.push(new_conn);
+                }
+            }
+
+            let manager = connection
+                .object_server()
+                .interface::<_, RemoteInterface1>(MANAGER_PATH)
+                .await?;
+            {
+                let mut manager = manager.get_mut().await;
+                if let Some(remote) = manager.remote_battery_charge_limit1.as_mut() {
+                    remote.ping_success = true;
+                    remote.register().await?;
+                }
+            }
+
+            Ok(())
         }
     }
 
     #[async_trait]
     impl TestSetup for RemoteSetup {
         async fn setup(&mut self, _: &testing::TestHandle, _: &Connection) -> Result<()> {
-            if self.configs > 1 {
+            write(
+                path("/usr/share/steamos-manager/remotes.d/00-test.toml"),
+                format!(
+                    "[{}]\nbus_name = \"com.steampowered.TestDaemon\"\nobject_path = \"/foo\"",
+                    self.name
+                )
+                .as_bytes(),
+            )
+            .await?;
+            if self.configs > 0 {
                 for c in 1..self.configs {
                     write(
                         path(format!("/usr/share/steamos-manager/remotes.d/{c:02}-test.toml")),
@@ -2727,16 +2812,6 @@ mod test {
                     )
                     .await?;
                 }
-            } else {
-                write(
-                    path("/usr/share/steamos-manager/remotes.d/test.toml"),
-                    format!(
-                        "[{}]\nbus_name = \"com.steampowered.TestDaemon\"\nobject_path = \"/foo\"",
-                        self.name
-                    )
-                    .as_bytes(),
-                )
-                .await?;
             }
 
             Ok(())
@@ -2745,6 +2820,72 @@ mod test {
 
     #[tokio::test]
     async fn remote_battery_charge_limit1_autoadd() {
+        let mut test = start(TestConfig::only_setup(RemoteSetup::new(
+            "BatteryChargeLimit1",
+            1,
+        )))
+        .await
+        .unwrap();
+
+        test.setup
+            .setup_remotes(&test.handle, &test.connection)
+            .await
+            .unwrap();
+
+        let new_conn = test.handle.new_connection().await.unwrap();
+        let proxy = RemoteInterface1Proxy::builder(&new_conn)
+            .destination(test.connection.unique_name().unwrap())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        assert!(
+            !test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_battery_charge_limit1_autoadd_duplicate() {
+        let mut test = start(TestConfig::only_setup(RemoteSetup::new(
+            "BatteryChargeLimit1",
+            2,
+        )))
+        .await
+        .unwrap();
+
+        test.setup
+            .setup_remotes(&test.handle, &test.connection)
+            .await
+            .unwrap();
+
+        let new_conn = test.handle.new_connection().await.unwrap();
+        let proxy = RemoteInterface1Proxy::builder(&new_conn)
+            .destination(test.connection.unique_name().unwrap())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        assert!(
+            !test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
+                .await
+                .unwrap()
+        );
+
+        let remote_config = RemoteInterface1Config::load().await.unwrap();
+        assert_eq!(
+            remote_config
+                .battery_charge_limit1
+                .map(|config| config.object_path.to_string()),
+            Some(String::from("/foo1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_battery_charge_limit1_autoadd_no_remote() {
         let test = start(TestConfig::only_setup(RemoteSetup::new(
             "BatteryChargeLimit1",
             1,
@@ -2761,17 +2902,17 @@ mod test {
             .unwrap();
 
         assert!(
-            !test_remote_interface_missing::<BatteryChargeLimit1>(&proxy, &test)
+            test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
                 .await
                 .unwrap()
         );
     }
 
     #[tokio::test]
-    async fn remote_battery_charge_limit1_autoadd_duplicate() {
+    async fn remote_battery_charge_limit1_autoadd_late_remote() {
         let test = start(TestConfig::only_setup(RemoteSetup::new(
             "BatteryChargeLimit1",
-            2,
+            1,
         )))
         .await
         .unwrap();
@@ -2785,17 +2926,72 @@ mod test {
             .unwrap();
 
         assert!(
-            !test_remote_interface_missing::<BatteryChargeLimit1>(&proxy, &test)
+            test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
                 .await
                 .unwrap()
         );
 
-        let remote_config = RemoteInterface1Config::load().await.unwrap();
-        assert_eq!(
-            remote_config
-                .battery_charge_limit1
-                .map(|config| config.object_path.to_string()),
-            Some(String::from("/foo1"))
+        let manager = test
+            .connection
+            .object_server()
+            .interface::<_, RemoteInterface1>(MANAGER_PATH)
+            .await
+            .unwrap();
+        {
+            let mut manager = manager.get_mut().await;
+            if let Some(remote) = manager.remote_battery_charge_limit1.as_mut() {
+                remote.ping_success = true;
+            }
+        }
+        let new_conn = test.handle.new_connection().await.unwrap();
+        new_conn
+            .request_name("com.steampowered.TestDaemon")
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(1)).await;
+
+        assert!(
+            !test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_battery_charge_limit1_autoadd_drop_remote() {
+        let mut test = start(TestConfig::only_setup(RemoteSetup::new(
+            "BatteryChargeLimit1",
+            1,
+        )))
+        .await
+        .unwrap();
+
+        test.setup
+            .setup_remotes(&test.handle, &test.connection)
+            .await
+            .unwrap();
+
+        let new_conn = test.handle.new_connection().await.unwrap();
+        let proxy = RemoteInterface1Proxy::builder(&new_conn)
+            .destination(test.connection.unique_name().unwrap())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        assert!(
+            !test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
+                .await
+                .unwrap()
+        );
+
+        test.setup.remotes.clear();
+        sleep(Duration::from_millis(1)).await;
+
+        assert!(
+            test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
+                .await
+                .unwrap()
         );
     }
 
@@ -2827,7 +3023,7 @@ mod test {
         let test = start(TestConfig::none()).await.unwrap();
 
         let new_conn = test.handle.new_connection().await.unwrap();
-        test_remote_interface_added::<BatteryChargeLimit1>(&test, &new_conn)
+        test_remote_interface_added::<BatteryChargeLimit1, _>(&test, &new_conn)
             .await
             .unwrap();
 
