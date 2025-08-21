@@ -303,7 +303,6 @@ impl Parse for RemoteInterface {
                 ));
             };
             let ty = decompose_generic(&field.ty, "Option")?;
-            let ty = decompose_generic(ty, "InterfaceRef")?;
             let Type::Path(TypePath { path, .. }) = &ty else {
                 return Err(Error::new(
                     ty.span(),
@@ -311,7 +310,7 @@ impl Parse for RemoteInterface {
                 ));
             };
             let iface = path.require_ident()?.to_string();
-            let Some(iface) = iface.strip_suffix("Remote") else {
+            let Some(iface) = iface.strip_suffix("RemoteOwner") else {
                 return Err(Error::new(
                     path.span(),
                     "RemoteInterface requires an interface Remote",
@@ -343,6 +342,7 @@ impl ToTokens for Interface {
         let name = format_ident!("{}", self.name);
         let struct_name: Ident = format_ident!("{}Remote", self.name);
         let proxy_name: Ident = format_ident!("{}Proxy", self.name);
+        let owner_name: Ident = format_ident!("{}RemoteOwner", self.name);
 
         let receivers: Vec<Ident> = signals
             .iter()
@@ -354,65 +354,88 @@ impl ToTokens for Interface {
                 #substream
             }
 
+            #[derive(Debug)]
             struct #struct_name {
                 proxy: #proxy_name<'static>,
-                signal_task: JoinHandle<Result<()>>,
-                interlock: Option<oneshot::Sender<()>>,
             }
 
-            impl #struct_name {
-                pub async fn new<'a, 'b>(
+            #[derive(Debug)]
+            struct #owner_name {
+                connection: Connection,
+                proxy: #proxy_name<'static>,
+                signal_task: JoinHandle<anyhow::Result<()>>,
+                is_transient: bool,
+                #[cfg(test)]
+                ping_success: bool,
+            }
+
+            impl RemoteOwner for #owner_name {
+                async fn new<'a, 'b>(
                     destination: &BusName<'a>,
                     path: ObjectPath<'b>,
-                    connection: &Connection
+                    connection: &Connection,
+                    is_transient: bool,
                 )
-                -> fdo::Result<#struct_name> {
+                -> fdo::Result<#owner_name> {
                     let proxy = #proxy_name::builder(connection)
                         .path(path.to_owned())?
                         .destination(destination.to_owned())?
                         .build()
                         .await?;
-                    let (signal_task, interlock) = #struct_name::signal_task(proxy.clone(), connection.clone())
+                    let signal_task = Self::signal_task(proxy.clone(), connection.clone())
                         .await
                         .map_err(to_zbus_fdo_error)?;
-                    Ok(#struct_name {
+                    Ok(#owner_name {
+                        connection: connection.clone(),
                         proxy,
                         signal_task,
-                        interlock: Some(interlock),
+                        is_transient,
+                        #[cfg(test)]
+                        ping_success: false,
                     })
                 }
+            }
 
-                fn remote(&self) -> &BusName<'_> {
-                    self.proxy.inner().destination()
-                }
-
-                async fn signal_task(
+            impl #owner_name {
+                async fn signal_task_impl(
                     proxy: #proxy_name<'static>,
-                    connection: Connection
-                ) -> Result<(JoinHandle<Result<()>>, oneshot::Sender<()>)> {
-                    let (tx1, rx1) = oneshot::channel();
-                    let (tx2, rx2) = oneshot::channel();
-                    let handle = spawn(async move {
-                        let object_server = connection.object_server();
-                        let dbus_proxy = DBusProxy::new(&connection).await?;
-                        let mut name_changed_receiver = dbus_proxy.receive_name_owner_changed().await?;
-                        #(let mut #receivers = proxy.#receivers().await;)*
-                        // This should never fail. If it does, something has gone very wrong.
-                        tx1.send(()).unwrap();
-                        rx2.await?;
-                        let mut interface = object_server
+                    connection: Connection,
+                    tx1: oneshot::Sender<()>,
+                    rx2: oneshot::Receiver<()>,
+                ) -> Result<()> {
+                    use zbus::proxy::ProxyImpl;
+
+                    let object_server = connection.object_server();
+                    let dbus_proxy = DBusProxy::new(&connection).await?;
+                    let mut name_changed_receiver = dbus_proxy.receive_name_owner_changed().await?;
+                    #(let mut #receivers = proxy.#receivers().await;)*
+                    // This should never fail. If it does, something has gone very wrong.
+                    tx1.send(()).unwrap();
+                    rx2.await?;
+                    loop {
+                        let mut interface = match object_server
                             .interface::<_, #struct_name>(MANAGER_PATH)
-                            .await?;
-                        let emitter = interface.signal_emitter();
-                        loop {
-                            tokio::select! {
-                                Some(changed) = name_changed_receiver.next() => {
-                                    match changed.args() {
-                                        Ok(args) => {
-                                            if args.name() != proxy.inner().destination() {
-                                                continue;
-                                            }
-                                            if args.new_owner().is_none() {
+                            .await {
+                            Ok(interface) => Some(interface),
+                            Err(zbus::Error::InterfaceNotFound) => None,
+                            Err(e) => return Err(e.into()),
+                        };
+
+                        let emitter = if let Some(interface) = interface.as_ref() {
+                            Some(interface.signal_emitter())
+                        } else {
+                            None
+                        };
+
+                        tokio::select! {
+                            Some(changed) = name_changed_receiver.next() => {
+                                match changed.args() {
+                                    Ok(args) => {
+                                        if args.name() != proxy.inner().destination() {
+                                            continue;
+                                        }
+                                        match args.new_owner().as_ref() {
+                                            None => {
                                                 let manager = object_server
                                                     .interface::<_, RemoteInterface1>(MANAGER_PATH)
                                                     .await?;
@@ -420,32 +443,109 @@ impl ToTokens for Interface {
                                                 manager
                                                     .get_mut()
                                                     .await
-                                                    .unregister(
-                                                        Self::name().as_str(),
-                                                        None,
+                                                    .unload(
+                                                        <#struct_name as Interface>::name().as_str(),
                                                         &connection,
-                                                        emitter
+                                                        emitter,
                                                     )
                                                     .await?;
                                             }
-                                        },
-                                        Err(e) => error!("Error receiving signal: {e}"),
-                                    }
-                                },
-                                #(Some(val) = #receivers.next() => {
-                                    if let Err(e) = interface.get().await.#signals(&emitter).await {
-                                        error!("Error receiving signal: {e}");
-                                    };
-                                },)*
+                                            Some(owner) => {
+                                                let manager = object_server
+                                                    .interface::<_, RemoteInterface1>(MANAGER_PATH)
+                                                    .await?;
+                                                let emitter = manager.signal_emitter();
+                                                manager
+                                                    .get_mut()
+                                                    .await
+                                                    .load(
+                                                        <#struct_name as Interface>::name().as_str(),
+                                                        emitter,
+                                                    )
+                                                    .await?;
+                                            }
+                                        }
+                                    },
+                                    Err(e) => error!("Error receiving signal: {e}"),
+                                }
+                            },
+                            #(Some(val) = #receivers.next() => {
+                                let Some(interface) = interface.as_ref() else {
+                                    warn!("Lost signal");
+                                    continue;
+                                };
+                                let Some(emitter) = emitter.as_ref() else {
+                                    warn!("Lost signal");
+                                    continue;
+                                };
+                                if let Err(e) = interface.get().await.#signals(emitter).await {
+                                    error!("Error receiving signal: {e}");
+                                };
+                            },)*
+                        }
+                    }
+                }
+
+                async fn signal_task(
+                    proxy: #proxy_name<'static>,
+                    connection: Connection,
+                ) -> Result<JoinHandle<Result<()>>> {
+                    let (tx1, rx1) = oneshot::channel();
+                    let (tx2, rx2) = oneshot::channel();
+                    let handle = spawn(Self::signal_task_impl(proxy, connection, tx1, rx2));
+                    rx1.await?;
+                    let _ = tx2.send(());
+                    Ok(handle)
+                }
+
+                async fn is_registered(&self) -> Result<bool> {
+                    match self
+                        .connection
+                        .object_server()
+                        .interface::<_, #struct_name>(MANAGER_PATH)
+                        .await
+                    {
+                        Ok(_) => Ok(true),
+                        Err(zbus::Error::InterfaceNotFound) => Ok(false),
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+
+                async fn register(&self) -> fdo::Result<bool> {
+                    use zbus::proxy::ProxyImpl;
+
+                    if !self.is_transient {
+                        #[cfg(not(test))]
+                        {
+                            // Ping the remote to see if the service exists
+                            // TODO: Tap into the ObjectManager to find out if the object exists too
+                            let peer_proxy = fdo::PeerProxy::new(
+                                &self.connection,
+                                ProxyImpl::inner(&self.proxy).destination(),
+                                "/",
+                            )
+                            .await?;
+                            peer_proxy.ping().await?;
+                        }
+                        #[cfg(test)]
+                        {
+                            if !self.ping_success {
+                                return Err(fdo::Error::ServiceUnknown(String::from("No")));
                             }
                         }
-                    });
-                    rx1.await?;
-                    Ok((handle, tx2))
+                    }
+
+                    let object_server = self.connection.object_server();
+                    let interface = #struct_name { proxy: self.proxy.clone() };
+                    register::<#name>(object_server, interface).await
+                }
+
+                fn remote(&self) -> &BusName<'_> {
+                    self.proxy.inner().destination()
                 }
             }
 
-            impl Drop for #struct_name {
+            impl Drop for #owner_name {
                 fn drop(&mut self) {
                     self.signal_task.abort();
                 }
@@ -453,6 +553,7 @@ impl ToTokens for Interface {
 
             impl RemoteInterface for #name {
                 type Remote = #struct_name;
+                type Owner = #owner_name;
             }
         });
     }
@@ -543,43 +644,34 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                 bus_name: &BusName<'_>,
                 connection: &Connection,
                 ctxt: Option<&SignalEmitter<'_>>,
+                is_transient: bool,
             ) -> fdo::Result<bool> {
                 let object_server = connection.object_server();
                 let object = object.to_owned();
 
                 match name {
                     #(_ if name == <#iface as Interface>::name().as_str() => {
-                        if self.#var.is_some() {
-                            return Ok(false);
+                        if let Some(iface) = self.#var.as_ref() {
+                            match iface.register().await {
+                                Ok(_) => (),
+                                Err(fdo::Error::ServiceUnknown(_) | fdo::Error::NameHasNoOwner(_)) => (),
+                                Err(e) => return Err(e.into()),
+                            }
+                        } else {
+                            let iface = <#iface as RemoteInterface>::Owner::new(
+                                &bus_name,
+                                object,
+                                connection,
+                                is_transient,
+                            )
+                            .await?;
+                            match iface.register().await {
+                                Ok(_) => (),
+                                Err(fdo::Error::ServiceUnknown(_) | fdo::Error::NameHasNoOwner(_)) => (),
+                                Err(e) => return Err(e.into()),
+                            }
+                            self.#var = Some(iface);
                         }
-                        if object_server
-                            .interface::<_, #iface>(MANAGER_PATH)
-                            .await
-                            .is_ok()
-                        {
-                            return Ok(false);
-                        }
-                        if object_server
-                            .interface::<_, <#iface as RemoteInterface>::Remote>(MANAGER_PATH)
-                            .await
-                            .is_ok()
-                        {
-                            return Ok(false);
-                        }
-
-                        let remote = <#iface as RemoteInterface>::Remote::new(
-                            &bus_name,
-                            object,
-                            connection,
-                        )
-                        .await?;
-                        object_server.at(MANAGER_PATH, remote).await?;
-                        let iface = object_server.interface
-                            ::<_, <#iface as RemoteInterface>::Remote>(MANAGER_PATH).await?;
-                        if let Some(interlock) = iface.get_mut().await.interlock.take() {
-                            let _ = interlock.send(());
-                        }
-                        self.#var = Some(iface);
                         if let Some(ctxt) = ctxt {
                             self.remote_interfaces_changed(ctxt).await?;
                         }
@@ -593,12 +685,33 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                 }
             }
 
+            async fn load(&self, name: &str, ctxt: &SignalEmitter<'_>) -> Result<()> {
+                use anyhow::bail;
+
+                match name {
+                    #(_ if name == <#iface as Interface>::name().as_str() => {
+                        let Some(iface) = self.#var.as_ref() else {
+                            bail!("Interface {name} not registered!");
+                        };
+                        match iface.register().await {
+                            Ok(_) => (),
+                            Err(fdo::Error::ServiceUnknown(_) | fdo::Error::NameHasNoOwner(_)) => (),
+                            Err(e) => return Err(e.into()),
+                        }
+                        self.remote_interfaces_changed(ctxt).await?;
+                    })*
+                    _ => bail!("Unknown interface {name}"),
+                }
+                Ok(())
+            }
+
             async fn unregister(
                 &mut self,
                 name: &str,
                 sender: Option<&UniqueName<'_>>,
                 connection: &Connection,
                 ctxt: &SignalEmitter<'_>,
+                transient: bool,
             ) -> fdo::Result<bool> {
                 let object_server = connection.object_server();
 
@@ -608,16 +721,18 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                             return Ok(false);
                         };
                         if let Some(sender) = sender {
-                            let iface = iface.get().await;
-                            let remote = iface.remote();
-                            if remote != sender {
+                            if iface.remote() != sender {
                                 return Err(fdo::Error::AccessDenied(format!(
                                     "Interface {name} is owned by a different remote"
                                 )));
                             }
                         }
                         object_server.remove::<#iface, _>(MANAGER_PATH).await?;
-                        self.#var = None;
+                        if let Some(owner) = self.#var.as_ref() {
+                            if !transient || owner.is_transient {
+                                self.#var = None;
+                            }
+                        }
                         self.remote_interfaces_changed(ctxt).await?;
                         Ok(true)
                     })*
@@ -629,10 +744,20 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                 }
             }
 
+            async fn unload(
+                &mut self,
+                name: &str,
+                connection: &Connection,
+                ctxt: &SignalEmitter<'_>,
+            ) -> Result<()> {
+                self.unregister(name, None, connection, ctxt, true).await?;
+                Ok(())
+            }
+
             async fn configure(
                 &mut self,
                 connection: &Connection,
-                config: &#config_name
+                config: &#config_name,
             ) -> Result<()> {
                 #(if let Some(config) = &config.#stripped_vars {
                     self.register(
@@ -641,6 +766,7 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                         &BusName::WellKnown(config.bus_name.to_owned().into_inner()),
                         connection,
                         None,
+                        false,
                     ).await?;
                 })*
                 Ok(())
@@ -650,12 +776,14 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
         #[interface(name = "com.steampowered.SteamOSManager1.RemoteInterface1")]
         impl #name {
             #[zbus(property)]
-            async fn remote_interfaces(&self) -> Vec<String> {
+            async fn remote_interfaces(&self) -> fdo::Result<Vec<String>> {
                 let mut ifaces = Vec::new();
-                #(if self.#var.is_some() {
-                    ifaces.push(#iface::name().to_string());
+                #(if let Some(iface) = self.#var.as_ref() {
+                    if iface.is_registered().await.map_err(to_zbus_fdo_error)? {
+                        ifaces.push(#iface::name().to_string());
+                    }
                 })*
-                ifaces
+                Ok(ifaces)
             }
         }
 

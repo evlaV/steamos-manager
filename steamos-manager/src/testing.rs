@@ -150,10 +150,7 @@ impl MockDBus {
             .ok_or(anyhow!("Failed to read address"))?;
 
         let address = Address::from_str(address.trim_end())?;
-        let connection = Builder::address(address.clone())?
-            .name("com.steampowered.TestDaemon")?
-            .build()
-            .await?;
+        let connection = Builder::address(address.clone())?.build().await?;
 
         Ok(MockDBus {
             connection,
