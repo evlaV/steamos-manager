@@ -340,7 +340,7 @@ mod test {
 
     #[tokio::test]
     async fn jupiter_valid() {
-        let config = read_to_string("../data/devices/jupiter.toml")
+        let config = read_to_string("../data/devices/steam-deck.toml")
             .await
             .expect("read_to_string");
         let res = toml::from_str::<PlatformConfig>(config.as_ref());
