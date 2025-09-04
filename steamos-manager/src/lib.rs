@@ -33,6 +33,7 @@ mod manager;
 mod platform;
 mod process;
 mod sls;
+mod sysfs;
 mod systemd;
 mod udev;
 mod uinput;

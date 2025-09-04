@@ -22,9 +22,9 @@ use crate::ds_inhibit::Inhibitor;
 use crate::inputplumber::DeckService;
 use crate::manager::root::SteamOSManager;
 use crate::path;
-use crate::power::SysfsWriterService;
 use crate::sls::ftrace::Ftrace;
 use crate::sls::{LogLayer, LogReceiver};
+use crate::sysfs::SysfsWriterService;
 
 #[derive(Copy, Clone, Default, Deserialize, Debug)]
 #[serde(default)]

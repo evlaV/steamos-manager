@@ -15,13 +15,12 @@ use std::ops::RangeInclusive;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
 use strum::{Display, EnumIter, EnumString, VariantNames};
 use tokio::fs::{self, try_exists, File};
 use tokio::io::{AsyncWriteExt, Interest};
 use tokio::net::unix::pipe;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::{oneshot, Mutex, Notify, OnceCell};
+use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 use zbus::Connection;
@@ -30,6 +29,7 @@ use crate::gpu::AMDGPU_HWMON_NAME;
 use crate::hardware::device_config;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::{TdpLimit1, MANAGER_PATH};
+use crate::sysfs::{find_sysdir, sysfs_queued_write, SysfsWritten};
 use crate::systemd::{EnableState, JobMode, SystemdUnit};
 use crate::Service;
 use crate::{path, write_synced};
@@ -55,8 +55,6 @@ const PLATFORM_PROFILE_PREFIX: &str = "/sys/class/platform-profile";
 
 const TDP_LIMIT1: &str = "power1_cap";
 const TDP_LIMIT2: &str = "power2_cap";
-
-static SYSFS_WRITER: OnceCell<Arc<SysfsWriterQueue>> = OnceCell::const_new();
 
 #[derive(Display, EnumString, Hash, Eq, PartialEq, Debug, Copy, Clone)]
 #[strum(serialize_all = "lowercase")]
@@ -173,82 +171,6 @@ pub(crate) enum TdpManagerCommand {
     UpdateDownloadMode,
     EnterDownloadMode(String, oneshot::Sender<Result<Option<OwnedFd>>>),
     ListDownloadModeHandles(oneshot::Sender<HashMap<String, u32>>),
-}
-
-#[derive(Debug)]
-pub(crate) enum SysfsWritten {
-    Written(Result<()>),
-    Superseded,
-}
-
-type SysfsQueue = (Vec<u8>, oneshot::Sender<SysfsWritten>);
-type SysfsQueueMap = HashMap<PathBuf, SysfsQueue>;
-
-#[derive(Debug)]
-struct SysfsWriterQueue {
-    values: Mutex<SysfsQueueMap>,
-    notify: Notify,
-}
-
-impl SysfsWriterQueue {
-    fn new() -> SysfsWriterQueue {
-        SysfsWriterQueue {
-            values: Mutex::new(HashMap::new()),
-            notify: Notify::new(),
-        }
-    }
-
-    async fn send(&self, path: PathBuf, contents: Vec<u8>) -> oneshot::Receiver<SysfsWritten> {
-        let (tx, rx) = oneshot::channel();
-        if let Some((_, old_tx)) = self.values.lock().await.insert(path, (contents, tx)) {
-            let _ = old_tx.send(SysfsWritten::Superseded);
-        }
-        self.notify.notify_one();
-        rx
-    }
-
-    async fn recv(&self) -> Option<(PathBuf, Vec<u8>, oneshot::Sender<SysfsWritten>)> {
-        // Take an arbitrary file from the map
-        self.notify.notified().await;
-        let mut values = self.values.lock().await;
-        if let Some(path) = values.keys().next().cloned() {
-            values
-                .remove_entry(&path)
-                .map(|(path, (contents, tx))| (path, contents, tx))
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct SysfsWriterService {
-    queue: Arc<SysfsWriterQueue>,
-}
-
-impl SysfsWriterService {
-    pub fn init() -> Result<SysfsWriterService> {
-        ensure!(!SYSFS_WRITER.initialized(), "sysfs writer already active");
-        let queue = Arc::new(SysfsWriterQueue::new());
-        SYSFS_WRITER.set(queue.clone())?;
-        Ok(SysfsWriterService { queue })
-    }
-}
-
-impl Service for SysfsWriterService {
-    const NAME: &'static str = "sysfs-writer";
-
-    async fn run(&mut self) -> Result<()> {
-        loop {
-            let Some((path, contents, tx)) = self.queue.recv().await else {
-                continue;
-            };
-            let res = write_synced(path, &contents)
-                .await
-                .inspect_err(|message| error!("Error writing to sysfs file: {message}"));
-            let _ = tx.send(SysfsWritten::Written(res));
-        }
-    }
 }
 
 async fn read_cpu_sysfs_contents<S: AsRef<Path>>(suffix: S) -> Result<String> {
@@ -453,24 +375,6 @@ pub(crate) async fn set_cpu_boost_state(state: CPUBoostState) -> Result<()> {
         .inspect_err(|message| error!("Error writing to CPU boost sysfs file: {message}"))
 }
 
-async fn find_sysdir(prefix: impl AsRef<Path>, expected: &str) -> Result<PathBuf> {
-    let mut dir = fs::read_dir(prefix.as_ref()).await?;
-    loop {
-        let base = match dir.next_entry().await? {
-            Some(entry) => entry.path(),
-            None => bail!("prefix not found"),
-        };
-        let file_name = base.join("name");
-        let name = fs::read_to_string(file_name.as_path())
-            .await?
-            .trim()
-            .to_string();
-        if name == expected {
-            return Ok(base);
-        }
-    }
-}
-
 pub(crate) async fn find_hwmon(hwmon: &str) -> Result<PathBuf> {
     find_sysdir(path(HWMON_PREFIX), hwmon).await
 }
@@ -655,14 +559,11 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
         .ok_or(anyhow!("No battery charge limit configured"))?;
     let base = find_hwmon(config.hwmon_name.as_str()).await?;
 
-    Ok(SYSFS_WRITER
-        .get()
-        .ok_or(anyhow!("sysfs writer not running"))?
-        .send(
-            base.join(config.attribute.clone()),
-            data.as_bytes().to_owned(),
-        )
-        .await)
+    sysfs_queued_write(
+        base.join(config.attribute.clone()),
+        data.as_bytes().to_owned(),
+    )
+    .await
 }
 
 pub(crate) async fn get_available_platform_profiles(name: &str) -> Result<Vec<String>> {

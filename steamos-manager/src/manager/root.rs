@@ -35,10 +35,11 @@ use crate::platform::platform_config;
 use crate::power::{
     set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
     tdp_limit_manager, CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager,
-    SysfsWritten, TdpLimitManager,
+    TdpLimitManager,
 };
 use crate::process::{run_script, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
+use crate::sysfs::SysfsWritten;
 use crate::wifi::{
     extract_wifi_trace, generate_wifi_dump, set_wifi_backend, set_wifi_debug_mode,
     set_wifi_power_management_state, WifiBackend, WifiDebugMode, WifiPowerManagement,
@@ -582,18 +583,17 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)?;
         let connection = connection.clone();
         spawn(async move {
-            match written.await {
-                Ok(SysfsWritten::Written(res)) => {
-                    if let Ok(interface) = connection
-                        .object_server()
-                        .interface::<_, Self>("/com/steampowered/SteamOSManager1")
-                        .await
-                    {
-                        interface.max_charge_level_changed().await?;
-                    }
-                    res
+            if let Ok(SysfsWritten::Written(res)) = written.await {
+                if let Ok(interface) = connection
+                    .object_server()
+                    .interface::<_, Self>("/com/steampowered/SteamOSManager1")
+                    .await
+                {
+                    interface.max_charge_level_changed().await?;
                 }
-                _ => Ok(()),
+                res
+            } else {
+                Ok(())
             }
         });
         Ok(())
