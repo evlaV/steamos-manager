@@ -13,7 +13,8 @@ use tokio::fs::File;
 use tokio::spawn;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
-use tracing::{error, info};
+use tracing::{debug, error, info};
+use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{self, Fd};
 use zbus::{fdo, interface, proxy, Connection};
@@ -41,7 +42,7 @@ use crate::wifi::{
     extract_wifi_trace, generate_wifi_dump, set_wifi_backend, set_wifi_debug_mode,
     set_wifi_power_management_state, WifiBackend, WifiDebugMode, WifiPowerManagement,
 };
-use crate::{path, API_VERSION};
+use crate::{path, SerialOrderValidator, API_VERSION};
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 #[repr(u32)]
@@ -55,6 +56,7 @@ enum PrepareFactoryResetResult {
 pub struct SteamOSManager {
     connection: Connection,
     channel: Sender<Command>,
+    order: SerialOrderValidator,
     wifi_debug_mode: WifiDebugMode,
     fan_control: FanControl,
     tdp_limit_manager: Option<Box<dyn TdpLimitManager>>,
@@ -87,6 +89,7 @@ impl SteamOSManager {
             job_manager: JobManager::new(connection.clone()).await?,
             connection,
             channel,
+            order: SerialOrderValidator::default(),
         })
     }
 }
@@ -102,7 +105,7 @@ pub(crate) trait RootManager {
     fn set_default_session(&self, session: &str) -> zbus::Result<()>;
 }
 
-#[interface(name = "com.steampowered.SteamOSManager1.RootManager")]
+#[interface(name = "com.steampowered.SteamOSManager1.RootManager", spawn = false)]
 impl SteamOSManager {
     async fn prepare_factory_reset(&self, kind: u32) -> fdo::Result<u32> {
         // Run steamos-reset with arguments based on flags passed and return 1 on success
@@ -299,7 +302,15 @@ impl SteamOSManager {
             .await
     }
 
-    async fn set_gpu_power_profile(&self, value: &str) -> fdo::Result<()> {
+    async fn set_gpu_power_profile(
+        &mut self,
+        value: &str,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        if !self.order.check_header(header) {
+            debug!("SetGpuPowerProfile: discarding out of order serial");
+            return Ok(());
+        }
         let Some(ref driver) = self.gpu_power_profile else {
             return Err(fdo::Error::Failed(String::from(
                 "GPU power profile settings not configured",
@@ -334,7 +345,15 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)
     }
 
-    async fn set_gpu_performance_level(&self, level: &str) -> fdo::Result<()> {
+    async fn set_gpu_performance_level(
+        &mut self,
+        level: &str,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        if !self.order.check_header(header) {
+            debug!("SetGpuPerformanceLevel: discarding out of order serial");
+            return Ok(());
+        }
         let Some(ref driver) = self.gpu_performance_level else {
             return Err(fdo::Error::Failed(String::from(
                 "GPU performance settings not configured",
@@ -351,7 +370,15 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)
     }
 
-    async fn set_manual_gpu_clock(&self, clocks: u32) -> fdo::Result<()> {
+    async fn set_manual_gpu_clock(
+        &mut self,
+        clocks: u32,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        if !self.order.check_header(header) {
+            debug!("SetManualGpuClock: discarding out of order serial");
+            return Ok(());
+        }
         let Some(ref driver) = self.gpu_performance_level else {
             return Err(fdo::Error::Failed(String::from(
                 "GPU performance settings not configured",
@@ -364,7 +391,15 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)
     }
 
-    async fn set_tdp_limit(&self, limit: u32) -> fdo::Result<()> {
+    async fn set_tdp_limit(
+        &mut self,
+        limit: u32,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        if !self.order.check_header(header) {
+            debug!("SetTdpLimit: discarding out of order serial");
+            return Ok(());
+        }
         let Some(ref manager) = self.tdp_limit_manager else {
             return Err(fdo::Error::Failed(String::from(
                 "TDP limiting not configured",
@@ -500,10 +535,15 @@ impl SteamOSManager {
     async fn max_charge_level_changed(signal_emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     async fn set_max_charge_level(
-        &self,
+        &mut self,
         level: i32,
         #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<()> {
+        if !self.order.check_header(header) {
+            debug!("SetMaxChargeLevel: discarding out of order serial");
+            return Ok(());
+        }
         let written = set_max_charge_level(if level == -1 { 0 } else { level })
             .await
             .map_err(to_zbus_fdo_error)?;

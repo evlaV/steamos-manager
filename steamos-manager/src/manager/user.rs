@@ -12,7 +12,8 @@ use tokio::fs::try_exists;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
+use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
 use zbus::proxy::{Builder, CacheProperties};
 use zbus::zvariant::Fd;
@@ -42,7 +43,7 @@ use crate::session::{is_session_managed, valid_desktop_sessions, LoginMode, Sess
 use crate::wifi::{
     get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces, WifiBackend,
 };
-use crate::{Service, API_VERSION};
+use crate::{SerialOrderValidator, Service, API_VERSION};
 
 pub(crate) const MANAGER_PATH: &str = "/com/steampowered/SteamOSManager1";
 
@@ -121,6 +122,7 @@ struct AmbientLightSensor1 {
 
 struct BatteryChargeLimit1 {
     proxy: Proxy<'static>,
+    order: SerialOrderValidator,
 }
 
 struct CpuBoost1 {
@@ -129,6 +131,7 @@ struct CpuBoost1 {
 
 struct CpuScaling1 {
     proxy: Proxy<'static>,
+    order: SerialOrderValidator,
 }
 
 struct FactoryReset1 {
@@ -142,15 +145,18 @@ struct FanControl1 {
 struct GpuPerformanceLevel1 {
     proxy: Proxy<'static>,
     driver: Box<dyn GpuPerformanceLevelDriver>,
+    order: SerialOrderValidator,
 }
 
 struct GpuPowerProfile1 {
     proxy: Proxy<'static>,
     driver: Box<dyn GpuPowerProfileDriver>,
+    order: SerialOrderValidator,
 }
 
 pub(crate) struct TdpLimit1 {
     manager: UnboundedSender<TdpManagerCommand>,
+    order: SerialOrderValidator,
 }
 
 struct HdmiCec1 {
@@ -330,8 +336,19 @@ impl BatteryChargeLimit1 {
     }
 
     #[zbus(property)]
-    async fn set_max_charge_level(&self, limit: i32) -> zbus::Result<()> {
-        self.proxy.call("SetMaxChargeLevel", &(limit)).await
+    async fn set_max_charge_level(
+        &mut self,
+        limit: i32,
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set MaxChargeLevel: discarding out of order serial");
+            return Ok(());
+        }
+        Ok(self.proxy.call("SetMaxChargeLevel", &(limit)).await?)
     }
 
     #[zbus(property(emits_changed_signal = "const"))]
@@ -393,15 +410,23 @@ impl CpuScaling1 {
 
     #[zbus(property)]
     async fn set_cpu_scaling_governor(
-        &self,
+        &mut self,
         governor: String,
         #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
-    ) -> zbus::Result<()> {
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set CpuScalingGovernor: discarding out of order serial");
+            return Ok(());
+        }
         let _: () = self
             .proxy
             .call("SetCpuScalingGovernor", &(governor))
             .await?;
-        self.cpu_scaling_governor_changed(&ctx).await
+        Ok(self.cpu_scaling_governor_changed(&ctx).await?)
     }
 }
 
@@ -455,12 +480,20 @@ impl GpuPerformanceLevel1 {
 
     #[zbus(property)]
     async fn set_gpu_performance_level(
-        &self,
+        &mut self,
         level: &str,
         #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
-    ) -> zbus::Result<()> {
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set GpuPerformanceLevel: discarding out of order serial");
+            return Ok(());
+        }
         let _: () = self.proxy.call("SetGpuPerformanceLevel", &(level)).await?;
-        self.gpu_performance_level_changed(&ctx).await
+        Ok(self.gpu_performance_level_changed(&ctx).await?)
     }
 
     #[zbus(property)]
@@ -474,12 +507,20 @@ impl GpuPerformanceLevel1 {
 
     #[zbus(property)]
     async fn set_manual_gpu_clock(
-        &self,
+        &mut self,
         clocks: u32,
         #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
-    ) -> zbus::Result<()> {
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set ManualGpuClock: discarding out of order serial");
+            return Ok(());
+        }
         let _: () = self.proxy.call("SetManualGpuClock", &(clocks)).await?;
-        self.manual_gpu_clock_changed(&ctx).await
+        Ok(self.manual_gpu_clock_changed(&ctx).await?)
     }
 
     #[zbus(property(emits_changed_signal = "const"))]
@@ -530,12 +571,20 @@ impl GpuPowerProfile1 {
 
     #[zbus(property)]
     async fn set_gpu_power_profile(
-        &self,
+        &mut self,
         profile: &str,
         #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
-    ) -> zbus::Result<()> {
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set GpuPowerProfile: discarding out of order serial");
+            return Ok(());
+        }
         let _: () = self.proxy.call("SetGpuPowerProfile", &(profile)).await?;
-        self.gpu_power_profile_changed(&ctx).await
+        Ok(self.gpu_power_profile_changed(&ctx).await?)
     }
 }
 
@@ -674,7 +723,10 @@ impl PerformanceProfile1 {
                 let (tx, rx) = oneshot::channel();
                 manager.send(TdpManagerCommand::IsActive(tx))?;
                 if rx.await?? {
-                    let tdp_limit = TdpLimit1 { manager };
+                    let tdp_limit = TdpLimit1 {
+                        manager,
+                        order: SerialOrderValidator::default(),
+                    };
                     connection
                         .object_server()
                         .at(MANAGER_PATH, tdp_limit)
@@ -927,10 +979,21 @@ impl TdpLimit1 {
     }
 
     #[zbus(property)]
-    async fn set_tdp_limit(&self, limit: u32) -> zbus::Result<()> {
+    async fn set_tdp_limit(
+        &mut self,
+        limit: u32,
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set TdpLimit: discarding out of order serial");
+            return Ok(());
+        }
         self.manager
             .send(TdpManagerCommand::SetTdpLimit(limit))
-            .map_err(|_| zbus::Error::Failure(String::from("Failed to set TDP limit")))
+            .map_err(|_| fdo::Error::Failed(String::from("Failed to set TDP limit")))
     }
 
     #[zbus(property(emits_changed_signal = "const"))]
@@ -1201,7 +1264,10 @@ async fn create_device_interfaces(
             let (tx, rx) = oneshot::channel();
             manager.send(TdpManagerCommand::IsActive(tx))?;
             if rx.await?? {
-                let tdp_limit = TdpLimit1 { manager };
+                let tdp_limit = TdpLimit1 {
+                    manager,
+                    order: SerialOrderValidator::default(),
+                };
                 object_server.at(MANAGER_PATH, tdp_limit).await?;
             }
             Ok::<(), Error>(())
@@ -1244,12 +1310,14 @@ pub(crate) async fn create_interfaces(
     };
     let battery_charge_limit = BatteryChargeLimit1 {
         proxy: proxy.clone(),
+        order: SerialOrderValidator::default(),
     };
     let cpu_boost = CpuBoost1 {
         proxy: proxy.clone(),
     };
     let cpu_scaling = CpuScaling1 {
         proxy: proxy.clone(),
+        order: SerialOrderValidator::default(),
     };
     let hdmi_cec = HdmiCec1::new(&session).await?;
     let manager2 = Manager2 {
@@ -1303,6 +1371,7 @@ pub(crate) async fn create_interfaces(
                     GpuPerformanceLevel1 {
                         proxy: proxy.clone(),
                         driver,
+                        order: SerialOrderValidator::default(),
                     },
                 )
                 .await?;
@@ -1318,6 +1387,7 @@ pub(crate) async fn create_interfaces(
                     GpuPowerProfile1 {
                         proxy: proxy.clone(),
                         driver,
+                        order: SerialOrderValidator::default(),
                     },
                 )
                 .await?;

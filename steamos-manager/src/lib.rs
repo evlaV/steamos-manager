@@ -9,14 +9,19 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use config::builder::AsyncState;
 use config::{AsyncSource, ConfigBuilder, ConfigError, FileFormat, Format, Map, Value};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::io::ErrorKind;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use tokio::fs::{read_dir, read_to_string, File};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use zbus::message::Header;
+use zbus::names::UniqueName;
 
 pub use steamos_manager_proxy as proxy;
 
@@ -112,6 +117,36 @@ impl<F: Format + Send + Sync + Debug, P: AsRef<Path> + Sized + Send + Sync + Deb
         self.format
             .parse(Some(&path), &text)
             .map_err(ConfigError::Foreign)
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct SerialOrderValidator {
+    serials: HashMap<UniqueName<'static>, NonZeroU32>,
+}
+
+impl SerialOrderValidator {
+    pub(crate) fn check_header(&mut self, header: Header<'_>) -> bool {
+        let Some(conn) = header.sender() else {
+            return false;
+        };
+
+        let serial = header.primary().serial_num();
+
+        match self.serials.entry(conn.to_owned()) {
+            Entry::Vacant(v) => {
+                v.insert(serial);
+                return true;
+            }
+            Entry::Occupied(mut o) => {
+                let e = o.get_mut();
+                if *e >= serial {
+                    return false;
+                }
+                *e = serial;
+                return true;
+            }
+        }
     }
 }
 
