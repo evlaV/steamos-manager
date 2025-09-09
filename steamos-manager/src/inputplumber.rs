@@ -103,12 +103,13 @@ impl DeckService {
             .await?;
         if !self.is_deck(&proxy).await? {
             let config = device_config().await?;
-            let targets = config
+            let targets: &[_] = config
                 .as_ref()
                 .and_then(|c| c.inputplumber.as_ref())
-                .map(|ip| ip.target_devices.as_slice())
-                .unwrap_or(&[InputPlumberTargetDevice::DeckUhid]);
-            let new_targets: Vec<&str> = targets.iter().map(|t| t.as_ref()).collect();
+                .map_or(&[InputPlumberTargetDevice::DeckUhid], |ip| {
+                    ip.target_devices.as_slice()
+                });
+            let new_targets: Vec<&str> = targets.iter().map(AsRef::as_ref).collect();
 
             debug!(
                 "Changing CompositeDevice {} into {:?} type",
