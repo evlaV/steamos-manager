@@ -11,11 +11,10 @@ use anyhow::anyhow;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
-use std::io::ErrorKind;
 use strum::{Display, EnumString};
 #[cfg(test)]
-use tokio::fs::create_dir_all;
-use tokio::fs::{read_dir, remove_file, try_exists, write};
+use tokio::fs::{create_dir_all, write};
+use tokio::fs::{read_dir, try_exists};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{broadcast, oneshot};
 use tokio_stream::StreamExt;
@@ -277,7 +276,12 @@ impl SessionManager {
 }
 
 pub(crate) mod root {
-    use super::*;
+    use anyhow::{Result, ensure};
+    use std::io::ErrorKind;
+    use tokio::fs::{remove_file, write};
+
+    use crate::path;
+    use crate::session::{CONFIG_PATH, CONFIG_PREFIX, TEMPORARY_CONFIG_PATH};
 
     pub(crate) async fn clean_temporary_sessions() -> Result<()> {
         let prefix = path(CONFIG_PREFIX);
