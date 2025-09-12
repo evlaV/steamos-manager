@@ -709,17 +709,13 @@ impl TdpManagerService {
             .await
             .inspect_err(|e| error!("Failed to set TDP limit: {e}"))?;
 
-        if let Ok(interface) = self
-            .session
-            .object_server()
-            .interface::<_, TdpLimit1>(MANAGER_PATH)
-            .await
-        {
-            tokio::spawn(async move {
+        let object_server = self.session.object_server().clone();
+        tokio::spawn(async move {
+            if let Ok(interface) = object_server.interface::<_, TdpLimit1>(MANAGER_PATH).await {
                 let ctx = interface.signal_emitter();
-                interface.get().await.tdp_limit_changed(ctx).await
-            });
-        }
+                let _ = interface.get().await.tdp_limit_changed(ctx).await;
+            }
+        });
         Ok(())
     }
 
