@@ -35,7 +35,7 @@ pub async fn script_exit_code(
 ) -> Result<i32> {
     let test = crate::testing::current();
     let args: Vec<&OsStr> = args.iter().map(std::convert::AsRef::as_ref).collect();
-    let cb = test.process_cb.get();
+    let cb = *test.process_cb.lock().await;
     cb(executable.as_ref(), args.as_ref()).map(|(res, _)| res)
 }
 
@@ -70,7 +70,7 @@ pub async fn script_output(
 ) -> Result<String> {
     let test = crate::testing::current();
     let args: Vec<&OsStr> = args.iter().map(std::convert::AsRef::as_ref).collect();
-    let cb = test.process_cb.get();
+    let cb = *test.process_cb.lock().await;
     cb(executable.as_ref(), args.as_ref()).map(|(_, res)| res)
 }
 
@@ -95,10 +95,10 @@ pub(crate) mod test {
     async fn test_run_script() {
         let h = testing::start();
 
-        h.test.process_cb.set(ok);
+        h.test.set_process_cb(ok).await;
         assert!(run_script("", &[] as &[&OsStr]).await.is_ok());
 
-        h.test.process_cb.set(code);
+        h.test.set_process_cb(code).await;
         assert_eq!(
             run_script("", &[] as &[&OsStr])
                 .await
@@ -107,7 +107,7 @@ pub(crate) mod test {
             "Exited 1"
         );
 
-        h.test.process_cb.set(exit);
+        h.test.set_process_cb(exit).await;
         assert_eq!(
             run_script("", &[] as &[&OsStr])
                 .await

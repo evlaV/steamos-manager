@@ -332,6 +332,16 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.RemoteInterface1
+      @short_description: TKTK
+  -->
+  <interface name="com.steampowered.SteamOSManager1.RemoteInterface1">
+
+    <property name="RemoteInterfaces" type="as" access="read"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.ScreenReader1
       @short_description: Optional interface for managing a screen reader.
 

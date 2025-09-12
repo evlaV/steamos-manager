@@ -626,14 +626,14 @@ mod test {
 
         let mut config = PlatformConfig::default();
         config.factory_reset = Some(ResetConfig::default());
-        test.h.test.platform_config.replace(Some(config));
+        test.h.test.set_platform_config(config).await;
 
         let name = test.connection.unique_name().unwrap();
         let proxy = PrepareFactoryResetProxy::new(&test.connection, name.clone())
             .await
             .unwrap();
 
-        test.h.test.process_cb.set(ok);
+        test.h.test.set_process_cb(ok).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::All as u32)
@@ -642,7 +642,7 @@ mod test {
             PrepareFactoryResetResult::RebootRequired as u32
         );
 
-        test.h.test.process_cb.set(code);
+        test.h.test.set_process_cb(code).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::All as u32)
@@ -651,7 +651,7 @@ mod test {
             PrepareFactoryResetResult::Unknown as u32
         );
 
-        test.h.test.process_cb.set(exit);
+        test.h.test.set_process_cb(exit).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::All as u32)
@@ -660,7 +660,7 @@ mod test {
             PrepareFactoryResetResult::Unknown as u32
         );
 
-        test.h.test.process_cb.set(ok);
+        test.h.test.set_process_cb(ok).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::OS as u32)
@@ -669,7 +669,7 @@ mod test {
             PrepareFactoryResetResult::RebootRequired as u32
         );
 
-        test.h.test.process_cb.set(code);
+        test.h.test.set_process_cb(code).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::OS as u32)
@@ -678,7 +678,7 @@ mod test {
             PrepareFactoryResetResult::Unknown as u32
         );
 
-        test.h.test.process_cb.set(exit);
+        test.h.test.set_process_cb(exit).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::OS as u32)
@@ -687,7 +687,7 @@ mod test {
             PrepareFactoryResetResult::Unknown as u32
         );
 
-        test.h.test.process_cb.set(ok);
+        test.h.test.set_process_cb(ok).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::User as u32)
@@ -696,7 +696,7 @@ mod test {
             PrepareFactoryResetResult::RebootRequired as u32
         );
 
-        test.h.test.process_cb.set(code);
+        test.h.test.set_process_cb(code).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::User as u32)
@@ -705,7 +705,7 @@ mod test {
             PrepareFactoryResetResult::Unknown as u32
         );
 
-        test.h.test.process_cb.set(exit);
+        test.h.test.set_process_cb(exit).await;
         assert_eq!(
             proxy
                 .prepare_factory_reset(FactoryResetKind::User as u32)
@@ -736,8 +736,8 @@ mod test {
 
         test.h
             .test
-            .process_cb
-            .set(|_, _| Ok((0, String::from("0.0\n"))));
+            .set_process_cb(|_, _| Ok((0, String::from("0.0\n"))))
+            .await;
 
         fake_model(SteamDeckVariant::Jupiter)
             .await
@@ -760,14 +760,14 @@ mod test {
 
         test.h
             .test
-            .process_cb
-            .set(|_, _| Ok((0, String::from("1.0\n"))));
+            .set_process_cb(|_, _| Ok((0, String::from("1.0\n"))))
+            .await;
         assert_eq!(proxy.als_calibration_gain().await.unwrap(), &[1.0]);
 
         test.h
             .test
-            .process_cb
-            .set(|_, _| Ok((0, String::from("big\n"))));
+            .set_process_cb(|_, _| Ok((0, String::from("big\n"))))
+            .await;
         assert_eq!(proxy.als_calibration_gain().await.unwrap(), &[-1.0]);
 
         test.connection.close().await.unwrap();
