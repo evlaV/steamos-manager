@@ -136,7 +136,6 @@ impl SerialOrderValidator {
         match self.serials.entry(conn.to_owned()) {
             Entry::Vacant(v) => {
                 v.insert(serial);
-                return true;
             }
             Entry::Occupied(mut o) => {
                 let e = o.get_mut();
@@ -144,9 +143,9 @@ impl SerialOrderValidator {
                     return false;
                 }
                 *e = serial;
-                return true;
             }
         }
+        true
     }
 }
 
