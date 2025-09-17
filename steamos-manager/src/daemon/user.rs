@@ -10,8 +10,10 @@ use anyhow::anyhow;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, Sender};
 use tokio::sync::oneshot;
+use tokio::time::sleep;
 use tracing::subscriber::set_global_default;
 use tracing::{error, info};
 use tracing_subscriber::prelude::*;
@@ -19,6 +21,7 @@ use tracing_subscriber::{fmt, EnvFilter, Registry};
 #[cfg(not(test))]
 use xdg::BaseDirectories;
 use zbus::connection::{Builder, Connection};
+use zbus::fdo::PeerProxy;
 
 use crate::daemon::{channel, Daemon, DaemonCommand, DaemonContext};
 use crate::job::{JobManager, JobManagerService};
@@ -138,6 +141,20 @@ async fn create_connections(
     SignalRelayService,
 )> {
     let system = Connection::system().await?;
+    // Ensure the root daemon is running, or start it if it's not
+    for _ in 0..5 {
+        let peer = PeerProxy::new(&system, "com.steampowered.SteamOSManager1", "/").await?;
+        tokio::select! {
+            r = peer.ping() => {
+                if let Err(e) = r {
+                    error!("Couldn't ping root daemon: {e}");
+                } else {
+                    break;
+                }
+            },
+            _ = sleep(Duration::from_secs(1)) => (),
+        }
+    }
     let connection = Builder::session()?
         .name("com.steampowered.SteamOSManager1")?
         .build()
