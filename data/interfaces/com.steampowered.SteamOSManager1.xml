@@ -751,6 +751,21 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.WifiBackend1
+      @short_description: Optional interface for getting and setting Wi-Fi backend. 
+  -->
+  <interface name="com.steampowered.SteamOSManager1.WifiBackend1">
+    <!--
+        WifiBackend:
+
+        Controls which Wi-Fi backend is used by NetworkManager.
+
+        Valid states: iwd, wpa_supplicant
+    -->
+    <property name="WifiBackend" type="s" access="readwrite"/>
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.WifiDebug1
       @short_description: Optional interface for debugging Wi-Fi chips.
   -->

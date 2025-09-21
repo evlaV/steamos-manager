@@ -212,6 +212,10 @@ struct UpdateDock1 {
     job_manager: UnboundedSender<JobManagerCommand>,
 }
 
+struct WifiBackend1 {
+    proxy: Proxy<'static>,
+}
+
 struct WifiDebug1 {
     proxy: Proxy<'static>,
 }
@@ -1277,6 +1281,31 @@ impl UpdateDock1 {
     }
 }
 
+#[interface(name = "com.steampowered.SteamOSManager1.WifiBackend1")]
+impl WifiBackend1 {
+    #[zbus(property)]
+    async fn wifi_backend(&self) -> fdo::Result<String> {
+        match get_wifi_backend().await {
+            Ok(backend) => Ok(backend.to_string()),
+            Err(e) => Err(to_zbus_fdo_error(e)),
+        }
+    }
+
+    #[zbus(property)]
+    async fn set_wifi_backend(
+        &self,
+        backend: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> zbus::Result<()> {
+        let backend = match WifiBackend::try_from(backend) {
+            Ok(backend) => backend,
+            Err(e) => return Err(fdo::Error::InvalidArgs(e.to_string()).into()),
+        };
+        let _: () = self.proxy.call("SetWifiBackend", &(backend as u32)).await?;
+        self.wifi_backend_changed(&ctx).await
+    }
+}
+
 #[interface(name = "com.steampowered.SteamOSManager1.WifiDebug1")]
 impl WifiDebug1 {
     #[zbus(property)]
@@ -1568,6 +1597,9 @@ pub(crate) async fn create_interfaces(
         proxy: proxy.clone(),
         manager: SessionManager::new(session.clone(), &system, daemon).await?,
     };
+    let wifi_backend = WifiBackend1 {
+        proxy: proxy.clone(),
+    };
     let wifi_power_management = WifiPowerManagement1 {
         proxy: proxy.clone(),
     };
@@ -1581,6 +1613,7 @@ pub(crate) async fn create_interfaces(
     if device_type().await.unwrap_or_default() == "steam_deck" {
         object_server.at(MANAGER_PATH, als).await?;
     }
+    object_server.at(MANAGER_PATH, wifi_backend).await?;
     if steam_deck_variant().await.unwrap_or_default() == SteamDeckVariant::Galileo {
         let wifi_debug = WifiDebug1 {
             proxy: proxy.clone(),
