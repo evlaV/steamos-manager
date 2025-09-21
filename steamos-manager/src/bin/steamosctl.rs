@@ -20,8 +20,8 @@ use steamos_manager::proxy::{
     CpuScaling1Proxy, CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy,
     GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy,
     Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy,
-    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiDebug1Proxy,
-    WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
+    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiBackend1Proxy,
+    WifiDebug1Proxy, WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
 };
 use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
@@ -595,11 +595,11 @@ async fn main() -> Result<()> {
             println!("TDP limit min: {value}");
         }
         Commands::SetWifiBackend { backend } => {
-            let proxy = WifiDebug1Proxy::new(&conn).await?;
+            let proxy = WifiBackend1Proxy::new(&conn).await?;
             proxy.set_wifi_backend(backend.to_string().as_str()).await?;
         }
         Commands::GetWifiBackend => {
-            let proxy = WifiDebug1Proxy::new(&conn).await?;
+            let proxy = WifiBackend1Proxy::new(&conn).await?;
             let backend = proxy.wifi_backend().await?;
             match WifiBackend::try_from(backend.as_str()) {
                 Ok(be) => println!("Wi-Fi backend: {be}"),
