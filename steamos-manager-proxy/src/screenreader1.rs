@@ -52,13 +52,19 @@ pub trait ScreenReader1 {
     #[zbus(property)]
     fn set_voice(&self, value: &str) -> zbus::Result<()>;
 
+    /// VoiceLocale property
+    #[zbus(property)]
+    fn voice_locale(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn set_voice_locale(&self, value: &str) -> zbus::Result<()>;
+
     /// VoiceLocales property
     #[zbus(property)]
     fn voice_locales(&self) -> zbus::Result<Vec<String>>;
 
-    /// VoicesForLocale property
+    /// Voices property
     #[zbus(property)]
-    fn voices_for_locale(&self) -> zbus::Result<std::collections::HashMap<String, Vec<String>>>;
+    fn voices(&self) -> zbus::Result<Vec<String>>;
 
     /// Volume property
     #[zbus(property)]

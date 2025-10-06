@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::{ArgAction, Parser, Subcommand};
 use itertools::Itertools;
 use nix::time::{clock_gettime, ClockId};
@@ -290,11 +290,14 @@ enum Commands {
     /// Get screen reader known locales
     GetScreenReaderLocales,
 
+    /// Get screen reader locale
+    GetScreenReaderLocale,
+
+    /// Set screen reader locale
+    SetScreenReaderLocale { locale: String },
+
     /// Get screen reader voices for given locale
-    GetScreenReaderVoicesForLocale {
-        /// Valid locales can be found using get-screen-reader-locales.
-        locale: String,
-    },
+    GetScreenReaderVoices,
 
     /// Get screen reader voice
     GetScreenReaderVoice,
@@ -755,15 +758,6 @@ async fn main() -> Result<()> {
                 .trigger_action(action.to_string().as_str(), now.try_into()?)
                 .await?;
         }
-        Commands::GetScreenReaderVoice => {
-            let proxy = ScreenReader1Proxy::new(&conn).await?;
-            let voice = proxy.voice().await?;
-            println!("Voice: {voice}");
-        }
-        Commands::SetScreenReaderVoice { voice } => {
-            let proxy = ScreenReader1Proxy::new(&conn).await?;
-            proxy.set_voice(voice).await?;
-        }
         Commands::GetScreenReaderLocales => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
             let locales = proxy.voice_locales().await?;
@@ -772,16 +766,31 @@ async fn main() -> Result<()> {
                 println!("- {locale}");
             }
         }
-        Commands::GetScreenReaderVoicesForLocale { locale } => {
+        Commands::GetScreenReaderLocale => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            let voice_list = proxy.voices_for_locale().await?;
-            let voices = voice_list
-                .get(locale)
-                .ok_or_else(|| anyhow!("Unable to load voices map"))?;
+            let locale = proxy.voice_locale().await?;
+            println!("Locale: {locale}\n");
+        }
+        Commands::SetScreenReaderLocale { locale } => {
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
+            proxy.set_voice_locale(locale).await?;
+        }
+        Commands::GetScreenReaderVoices => {
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
+            let voices = proxy.voices().await?;
             println!("Voices:\n");
             for voice in voices.iter().sorted() {
                 println!("- {voice}");
             }
+        }
+        Commands::GetScreenReaderVoice => {
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
+            let voice = proxy.voice().await?;
+            println!("Voice: {voice}");
+        }
+        Commands::SetScreenReaderVoice { voice } => {
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
+            proxy.set_voice(voice).await?;
         }
         Commands::SwitchToDesktopMode => {
             let proxy = SessionManagement1Proxy::new(&conn).await?;
