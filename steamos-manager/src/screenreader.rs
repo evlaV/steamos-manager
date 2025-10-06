@@ -107,6 +107,7 @@ pub(crate) struct OrcaManager<'dbus> {
     keyboard: UInputDevice,
     voices: HashMap<String, Voice>,
     voices_by_language: HashMap<String, Vec<String>>,
+    locale: String,
 }
 
 fn default_map() -> Value {
@@ -127,6 +128,7 @@ impl<'dbus> OrcaManager<'dbus> {
             keyboard: UInputDevice::new()?,
             voices: HashMap::new(),
             voices_by_language: HashMap::new(),
+            locale: String::new(),
         };
         let _ = manager
             .load_values()
@@ -177,8 +179,17 @@ impl<'dbus> OrcaManager<'dbus> {
         Ok(())
     }
 
-    pub fn get_voices(&self) -> &HashMap<String, Vec<String>> {
+    pub fn get_voices_map(&self) -> &HashMap<String, Vec<String>> {
         &self.voices_by_language
+    }
+
+    pub fn get_voices(&self) -> Result<Vec<String>> {
+        // Get the voices for the current locale only
+        let list = self.voices_by_language.get(&self.locale);
+        match list {
+            Some(l) => Ok(l.to_owned()),
+            None => Ok(Vec::new()),
+        }
     }
 
     #[cfg(test)]
@@ -240,6 +251,20 @@ impl<'dbus> OrcaManager<'dbus> {
             self.stop_orca().await?;
         }
         self.enabled = enable;
+        Ok(())
+    }
+
+    pub fn locale(&self) -> &str {
+        self.locale.as_str()
+    }
+
+    pub fn set_locale(&mut self, locale: &str) -> Result<()> {
+        if self.voices_by_language.contains_key(locale) {
+            self.locale = locale.to_string();
+        } else {
+            bail!("Invalid locale specified")
+        }
+
         Ok(())
     }
 

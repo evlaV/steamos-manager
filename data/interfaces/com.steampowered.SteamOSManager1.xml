@@ -492,15 +492,6 @@
     <property name="Mode" type="s" access="readwrite"/>
 
     <!--
-        Voice
-
-        The voice to use for screen reading.
-
-        Valid voices can be found from GetVoicesForLocale
-    -->
-    <property name="Voice" type="s" access="readwrite"/>
-
-    <!--
         Voice Locales
 
         The list of known voice locales
@@ -508,9 +499,26 @@
     <property name="VoiceLocales" type="as" access="read"/>
 
     <!--
-        Map of voice names per locale
+        The currently used voice locale.
+      
+        Voices property only gives list for this locale when used.
+        Valid VoiceLocales can be found from the VoiceLocales property.
     -->
-    <property name="VoicesForLocale" type="a{sas}" access="read"/>
+    <property name="VoiceLocale" type="s" access="readwrite"/>
+    
+    <!--
+        The list of voices for the current locale
+    -->
+    <property name="Voices" type="as" access="read"/>
+
+    <!--
+        Voice
+
+        The voice to use for screen reading.
+
+        Valid voices can be found from Voices once a VoiceLocale has been set.
+    -->
+    <property name="Voice" type="s" access="readwrite"/>
 
     <!--
         Trigger Action

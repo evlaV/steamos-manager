@@ -893,8 +893,7 @@ impl ScreenReader0 {
     #[zbus(property)]
     async fn voice(&self) -> String {
         let guard = self.screen_reader.lock().await;
-        let voice = guard.voice().to_owned();
-        voice
+        guard.voice().to_owned()
     }
 
     #[zbus(property)]
@@ -918,14 +917,14 @@ impl ScreenReader0 {
         let locales = guard
             .get_voice_locales()
             .iter()
-            .map(|s| s.to_string()) // clone each &str into a String
+            .map(ToString::to_string) // clone each &str into a String
             .collect::<Vec<String>>();
         locales
     }
 
     #[zbus(property)]
     async fn voices_for_locale(&self) -> HashMap<String, Vec<String>> {
-        self.screen_reader.lock().await.get_voices().clone()
+        self.screen_reader.lock().await.get_voices_map().clone()
     }
 
     async fn trigger_action(&mut self, a: u32, timestamp: u64) -> fdo::Result<()> {
@@ -1035,10 +1034,42 @@ impl ScreenReader1 {
     }
 
     #[zbus(property)]
+    async fn voice_locale(&self) -> String {
+        let guard = self.screen_reader.lock().await;
+        guard.locale().to_owned()
+    }
+
+    #[zbus(property)]
+    async fn set_voice_locale(
+        &mut self,
+        locale: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        self.screen_reader
+            .lock()
+            .await
+            .set_locale(locale)
+            .map_err(to_zbus_fdo_error)?;
+        self.voice_locale_changed(&ctx)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.voices_changed(&ctx).await.map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn voice_locales(&self) -> Vec<String> {
+        let guard = self.screen_reader.lock().await;
+        guard
+            .get_voice_locales()
+            .iter()
+            .map(ToString::to_string) // clone each &str into a String
+            .collect::<Vec<String>>()
+    }
+
+    #[zbus(property)]
     async fn voice(&self) -> String {
         let guard = self.screen_reader.lock().await;
-        let voice = guard.voice().to_owned();
-        voice
+        guard.voice().to_owned()
     }
 
     #[zbus(property)]
@@ -1057,19 +1088,9 @@ impl ScreenReader1 {
     }
 
     #[zbus(property)]
-    async fn voice_locales(&self) -> Vec<String> {
+    async fn voices(&self) -> fdo::Result<Vec<String>> {
         let guard = self.screen_reader.lock().await;
-        let locales = guard
-            .get_voice_locales()
-            .iter()
-            .map(|s| s.to_string()) // clone each &str into a String
-            .collect::<Vec<String>>();
-        locales
-    }
-
-    #[zbus(property)]
-    async fn voices_for_locale(&self) -> HashMap<String, Vec<String>> {
-        self.screen_reader.lock().await.get_voices().clone()
+        guard.get_voices().map_err(to_zbus_fdo_error)
     }
 
     async fn trigger_action(&mut self, a: &str, timestamp: u64) -> fdo::Result<()> {
