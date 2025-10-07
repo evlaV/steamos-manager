@@ -627,7 +627,7 @@ impl HdmiCec1 {
 
 #[interface(name = "com.steampowered.SteamOSManager1.LowPowerMode1")]
 impl LowPowerMode1 {
-    async fn enter_download_mode(&self, identifier: &str) -> fdo::Result<Fd> {
+    async fn enter_download_mode(&self, identifier: &str) -> fdo::Result<Fd<'_>> {
         let (tx, rx) = oneshot::channel();
         self.manager
             .send(TdpManagerCommand::EnterDownloadMode(

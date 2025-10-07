@@ -195,7 +195,7 @@ impl SteamOSManager {
         gains
     }
 
-    async fn get_als_integration_time_file_descriptor(&self, index: u32) -> fdo::Result<Fd> {
+    async fn get_als_integration_time_file_descriptor(&self, index: u32) -> fdo::Result<Fd<'_>> {
         // Get the file descriptor for the als integration time sysfs path
         let i0 = match steam_deck_variant().await.map_err(to_zbus_fdo_error)? {
             SteamDeckVariant::Jupiter => 1,
