@@ -777,7 +777,7 @@ async fn main() -> Result<()> {
         }
         Commands::GetScreenReaderVoices => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            let voices = proxy.voices().await?;
+            let voices = proxy.get_voices().await?;
             println!("Voices:\n");
             for voice in voices.iter().sorted() {
                 println!("- {voice}");

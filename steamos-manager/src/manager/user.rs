@@ -1052,8 +1052,7 @@ impl ScreenReader1 {
             .map_err(to_zbus_fdo_error)?;
         self.voice_locale_changed(&ctx)
             .await
-            .map_err(to_zbus_fdo_error)?;
-        self.voices_changed(&ctx).await.map_err(to_zbus_fdo_error)
+            .map_err(to_zbus_fdo_error)
     }
 
     #[zbus(property)]
@@ -1087,8 +1086,7 @@ impl ScreenReader1 {
         self.voice_changed(&ctx).await.map_err(to_zbus_fdo_error)
     }
 
-    #[zbus(property)]
-    async fn voices(&self) -> fdo::Result<Vec<String>> {
+    async fn get_voices(&self) -> fdo::Result<Vec<String>> {
         let guard = self.screen_reader.lock().await;
         guard.get_voices().map_err(to_zbus_fdo_error)
     }

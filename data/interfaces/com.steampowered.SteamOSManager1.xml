@@ -507,11 +507,6 @@
     <property name="VoiceLocale" type="s" access="readwrite"/>
     
     <!--
-        The list of voices for the current locale
-    -->
-    <property name="Voices" type="as" access="read"/>
-
-    <!--
         Voice
 
         The voice to use for screen reading.
@@ -519,6 +514,15 @@
         Valid voices can be found from Voices once a VoiceLocale has been set.
     -->
     <property name="Voice" type="s" access="readwrite"/>
+
+    <!--
+        Get the list of voices for the current locale
+      
+        @voices: A list of voice names for the current locale.
+    -->
+    <method name="GetVoices">
+      <arg type="as" name="voices" direction="out"/>
+    </method>
 
     <!--
         Trigger Action

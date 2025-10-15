@@ -19,6 +19,9 @@ use zbus::proxy;
     assume_defaults = true
 )]
 pub trait ScreenReader1 {
+    /// GetVoices method
+    fn get_voices(&self) -> zbus::Result<Vec<String>>;
+
     /// TriggerAction method
     fn trigger_action(&self, action: &str, timestamp: u64) -> zbus::Result<()>;
 
@@ -61,10 +64,6 @@ pub trait ScreenReader1 {
     /// VoiceLocales property
     #[zbus(property)]
     fn voice_locales(&self) -> zbus::Result<Vec<String>>;
-
-    /// Voices property
-    #[zbus(property)]
-    fn voices(&self) -> zbus::Result<Vec<String>>;
 
     /// Volume property
     #[zbus(property)]
