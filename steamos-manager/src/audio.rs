@@ -28,13 +28,25 @@ pub enum Mode {
     Stereo,
 }
 
+#[derive(Display, EnumString, PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[repr(u32)]
+pub enum Mode2 {
+    Mono,
+    Auto,
+}
+
 pub(crate) struct AudioManager {
     mode: Option<Mode>,
+    mode2: Option<Mode2>,
 }
 
 impl AudioManager {
     pub async fn new() -> AudioManager {
-        let mut manager = AudioManager { mode: None };
+        let mut manager = AudioManager {
+            mode: None,
+            mode2: None,
+        };
         let _ = manager
             .load_values()
             .await
@@ -78,6 +90,14 @@ impl AudioManager {
         self.mode
     }
 
+    pub fn available_modes(&self) -> Vec<Mode2> {
+        vec![Mode2::Mono, Mode2::Auto]
+    }
+
+    pub fn mode2(&self) -> Option<Mode2> {
+        self.mode2
+    }
+
     pub async fn set_mode(&mut self, mode: Mode) -> Result<()> {
         if self.mode == Some(mode) {
             return Ok(());
@@ -94,6 +114,33 @@ impl AudioManager {
         }
 
         self.mode = Some(mode);
+        self.mode2 = Some(match mode {
+            Mode::Mono => Mode2::Mono,
+            Mode::Stereo => Mode2::Auto,
+        });
+        Ok(())
+    }
+
+    pub async fn set_mode2(&mut self, mode: Mode2) -> Result<()> {
+        if self.mode2 == Some(mode) {
+            return Ok(());
+        }
+
+        #[cfg(not(test))]
+        {
+            let mono = match mode {
+                Mode2::Mono => "true",
+                Mode2::Auto => "false",
+            };
+
+            run_script("/usr/bin/wpctl", &["settings", MONO_KEY, mono]).await?;
+        }
+
+        self.mode2 = Some(mode);
+        self.mode = Some(match mode {
+            Mode2::Mono => Mode::Mono,
+            Mode2::Auto => Mode::Stereo,
+        });
         Ok(())
     }
 
@@ -102,8 +149,14 @@ impl AudioManager {
         let output = script_output("/usr/bin/wpctl", &["settings", MONO_KEY]).await?;
 
         match output.trim() {
-            "Value: true" => self.mode = Some(Mode::Mono),
-            "Value: false" => self.mode = Some(Mode::Stereo),
+            "Value: true" => {
+                self.mode = Some(Mode::Mono);
+                self.mode2 = Some(Mode2::Mono);
+            }
+            "Value: false" => {
+                self.mode = Some(Mode::Stereo);
+                self.mode2 = Some(Mode2::Auto);
+            }
             _ => warn!("Unable to get audio mode from wpctl output"),
         }
 
@@ -128,10 +181,14 @@ mod test {
         manager.mode = Some(Mode::Mono);
         manager.set_mode(Mode::Stereo).await.unwrap();
         assert_eq!(manager.mode, Some(Mode::Stereo));
+        assert_eq!(manager.mode2, Some(Mode2::Auto));
         assert_eq!(manager.mode(), Some(Mode::Stereo));
+        assert_eq!(manager.mode2(), Some(Mode2::Auto));
 
         manager.set_mode(Mode::Mono).await.unwrap();
         assert_eq!(manager.mode, Some(Mode::Mono));
+        assert_eq!(manager.mode2, Some(Mode2::Mono));
         assert_eq!(manager.mode(), Some(Mode::Mono));
+        assert_eq!(manager.mode2(), Some(Mode2::Mono));
     }
 }
