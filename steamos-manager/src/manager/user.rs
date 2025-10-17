@@ -26,7 +26,7 @@ use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 
 use steamos_manager_macros::{RemoteManager, remote};
 
-use crate::audio::{AudioManager, Mode};
+use crate::audio::{AudioManager, Mode as AudioMode, Mode2 as Audio2Mode};
 use crate::cec::{HdmiCecControl, HdmiCecState};
 use crate::daemon::DaemonCommand;
 use crate::daemon::user::Command;
@@ -129,7 +129,11 @@ struct SteamOSManager {
 }
 
 struct AudioManager1 {
-    manager: AudioManager,
+    manager: Arc<Mutex<AudioManager>>,
+}
+
+struct AudioManager2 {
+    manager: Arc<Mutex<AudioManager>>,
 }
 
 struct AmbientLightSensor1 {
@@ -337,8 +341,7 @@ impl SteamOSManager {
 }
 
 impl AudioManager1 {
-    async fn new() -> Result<AudioManager1> {
-        let manager = AudioManager::new().await;
+    async fn new(manager: Arc<Mutex<AudioManager>>) -> Result<AudioManager1> {
         Ok(AudioManager1 { manager })
     }
 }
@@ -347,7 +350,7 @@ impl AudioManager1 {
 impl AudioManager1 {
     #[zbus(property)]
     async fn mode(&self) -> fdo::Result<String> {
-        let mode = self.manager.mode();
+        let mode = self.manager.lock().await.mode();
         match mode {
             Some(mode) => Ok(mode.to_string()),
             _ => Err(fdo::Error::Failed(String::from("Unknown audio mode"))),
@@ -356,11 +359,61 @@ impl AudioManager1 {
 
     #[zbus(property)]
     async fn set_mode(&mut self, m: &str) -> fdo::Result<()> {
-        let mode = match Mode::try_from(m) {
+        let mode = match AudioMode::try_from(m) {
             Ok(mode) => mode,
             Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
         };
-        self.manager.set_mode(mode).await.map_err(to_zbus_fdo_error)
+        self.manager
+            .lock()
+            .await
+            .set_mode(mode)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+}
+
+impl AudioManager2 {
+    async fn new(manager: Arc<Mutex<AudioManager>>) -> Result<AudioManager2> {
+        Ok(AudioManager2 { manager })
+    }
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.Audio2")]
+impl AudioManager2 {
+    #[zbus(property)]
+    async fn available_modes(&self) -> fdo::Result<Vec<String>> {
+        let modes = self
+            .manager
+            .lock()
+            .await
+            .available_modes()
+            .into_iter()
+            .map(|mode| mode.to_string())
+            .collect();
+        Ok(modes)
+    }
+
+    #[zbus(property)]
+    async fn mode(&self) -> fdo::Result<String> {
+        let mode = self.manager.lock().await.mode2();
+        match mode {
+            Some(mode) => Ok(mode.to_string()),
+            _ => Err(fdo::Error::Failed(String::from("Unknown audio mode"))),
+        }
+    }
+
+    #[zbus(property)]
+    async fn set_mode(&mut self, m: &str) -> fdo::Result<()> {
+        let mode = match Audio2Mode::try_from(m) {
+            Ok(mode) => mode,
+            Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
+        };
+        self.manager
+            .lock()
+            .await
+            .set_mode2(mode)
+            .await
+            .map_err(to_zbus_fdo_error)
     }
 }
 
@@ -1685,7 +1738,10 @@ pub(crate) async fn create_interfaces(
 
     let manager = SteamOSManager::new(system.clone(), proxy.clone(), job_manager.clone()).await?;
 
-    let audio_manager = AudioManager1::new().await?;
+    let audio_manager = AudioManager::new().await;
+    let audio_manager_mutex = Arc::new(Mutex::new(audio_manager));
+    let audio_manager1 = AudioManager1::new(audio_manager_mutex.clone()).await?;
+    let audio_manager2 = AudioManager2::new(audio_manager_mutex).await?;
     let als = AmbientLightSensor1 {
         proxy: proxy.clone(),
     };
@@ -1802,7 +1858,8 @@ pub(crate) async fn create_interfaces(
     object_server.at(MANAGER_PATH, manager2).await?;
 
     if AudioManager::is_supported().await? {
-        object_server.at(MANAGER_PATH, audio_manager).await?;
+        object_server.at(MANAGER_PATH, audio_manager1).await?;
+        object_server.at(MANAGER_PATH, audio_manager2).await?;
     }
 
     let mut session_manager_service = None;
