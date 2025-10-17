@@ -17,11 +17,11 @@ use steamos_manager::hardware::{FactoryResetKind, FanControlState};
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
     AmbientLightSensor1Proxy, Audio1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy,
-    CpuScaling1Proxy, FactoryReset1Proxy, FanControl1Proxy, GpuPerformanceLevel1Proxy,
-    GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy, Manager2Proxy,
-    PerformanceProfile1Proxy, ScreenReader0Proxy, SessionManagement1Proxy, Storage1Proxy,
-    TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiDebug1Proxy, WifiDebugDump1Proxy,
-    WifiPowerManagement1Proxy,
+    CpuScaling1Proxy, CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy,
+    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy,
+    Manager2Proxy, PerformanceProfile1Proxy, ScreenReader0Proxy, SessionManagement1Proxy,
+    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiDebug1Proxy,
+    WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
 };
 use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
@@ -73,6 +73,18 @@ enum Commands {
     SetCpuScalingGovernor {
         /// Valid governors are get-cpu-governors.
         governor: CPUScalingGovernor,
+    },
+
+    /// Get the available CPU schedulers
+    GetAvailableCpuSchedulers,
+
+    /// Get the current CPU scheduler
+    GetCpuScheduler,
+
+    /// Set the current CPU scheduler
+    SetCpuScheduler {
+        /// Valid schedulers are get-available-cpu-schedulers.
+        scheduler: String,
     },
 
     /// Get the current CPU boost state
@@ -453,6 +465,25 @@ async fn main() -> Result<()> {
             let proxy = CpuScaling1Proxy::new(&conn).await?;
             proxy
                 .set_cpu_scaling_governor(governor.to_string().as_str())
+                .await?;
+        }
+        Commands::GetAvailableCpuSchedulers => {
+            let proxy = CpuScheduler1Proxy::new(&conn).await?;
+            let schedulers = proxy.available_cpu_schedulers().await?;
+            println!("Schedulers:\n");
+            for name in schedulers.into_iter().sorted() {
+                println!("- {name}");
+            }
+        }
+        Commands::GetCpuScheduler => {
+            let proxy = CpuScheduler1Proxy::new(&conn).await?;
+            let scheduler = proxy.cpu_scheduler().await?;
+            println!("CPU Scheduler: {scheduler}");
+        }
+        Commands::SetCpuScheduler { scheduler } => {
+            let proxy = CpuScheduler1Proxy::new(&conn).await?;
+            proxy
+                .set_cpu_scheduler(scheduler.to_string().as_str())
                 .await?;
         }
         Commands::GetCpuBoostState => {

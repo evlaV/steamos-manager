@@ -36,7 +36,8 @@ use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
     get_available_cpu_scaling_governors, get_available_platform_profiles, get_cpu_boost_state,
-    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, TdpManagerCommand,
+    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, CpuSchedulerManager,
+    TdpManagerCommand,
 };
 use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
 use crate::session::{is_session_managed, valid_desktop_sessions, LoginMode, SessionManager};
@@ -130,6 +131,11 @@ struct CpuBoost1 {
 }
 
 struct CpuScaling1 {
+    proxy: Proxy<'static>,
+    order: SerialOrderValidator,
+}
+
+struct CpuScheduler1 {
     proxy: Proxy<'static>,
     order: SerialOrderValidator,
 }
@@ -427,6 +433,37 @@ impl CpuScaling1 {
             .call("SetCpuScalingGovernor", &(governor))
             .await?;
         Ok(self.cpu_scaling_governor_changed(&ctx).await?)
+    }
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.CpuScheduler1")]
+impl CpuScheduler1 {
+    #[zbus(property(emits_changed_signal = "const"))]
+    async fn available_cpu_schedulers(&self) -> fdo::Result<Vec<String>> {
+        getter!(self, "AvailableCpuSchedulers")
+    }
+
+    #[zbus(property)]
+    async fn cpu_scheduler(&self) -> fdo::Result<String> {
+        getter!(self, "CpuScheduler")
+    }
+
+    #[zbus(property)]
+    async fn set_cpu_scheduler(
+        &mut self,
+        scheduler: String,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set CpuScheduler: discarding out of order serial");
+            return Ok(());
+        }
+        let _: () = self.proxy.call("SetCpuScheduler", &(scheduler)).await?;
+        Ok(self.cpu_scheduler_changed(&ctx).await?)
     }
 }
 
@@ -1319,6 +1356,10 @@ pub(crate) async fn create_interfaces(
         proxy: proxy.clone(),
         order: SerialOrderValidator::default(),
     };
+    let cpu_scheduler = CpuScheduler1 {
+        proxy: proxy.clone(),
+        order: SerialOrderValidator::default(),
+    };
     let hdmi_cec = HdmiCec1::new(&session).await?;
     let manager2 = Manager2 {
         proxy: proxy.clone(),
@@ -1362,6 +1403,9 @@ pub(crate) async fn create_interfaces(
     }
 
     object_server.at(MANAGER_PATH, cpu_scaling).await?;
+    if CpuSchedulerManager::is_supported().await? {
+        object_server.at(MANAGER_PATH, cpu_scheduler).await?;
+    }
 
     match gpu_performance_level_driver().await {
         Ok(driver) => {

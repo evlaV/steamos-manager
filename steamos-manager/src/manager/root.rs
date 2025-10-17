@@ -34,7 +34,8 @@ use crate::job::JobManager;
 use crate::platform::platform_config;
 use crate::power::{
     set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
-    tdp_limit_manager, CPUBoostState, CPUScalingGovernor, SysfsWritten, TdpLimitManager,
+    tdp_limit_manager, CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager,
+    SysfsWritten, TdpLimitManager,
 };
 use crate::process::{run_script, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
@@ -66,6 +67,7 @@ pub struct SteamOSManager {
     // True on galileo devices, false otherwise
     should_trace: bool,
     job_manager: JobManager,
+    cpu_scheduler_manager: CpuSchedulerManager<'static>,
 }
 
 impl SteamOSManager {
@@ -87,6 +89,7 @@ impl SteamOSManager {
                 .ok(),
             should_trace: steam_deck_variant().await? == SteamDeckVariant::Galileo,
             job_manager: JobManager::new(connection.clone()).await?,
+            cpu_scheduler_manager: CpuSchedulerManager::new(connection.clone()).await?,
             connection,
             channel,
             order: SerialOrderValidator::default(),
@@ -331,6 +334,35 @@ impl SteamOSManager {
         set_cpu_scaling_governor(g)
             .await
             .inspect_err(|message| error!("Error setting CPU scaling governor: {message}"))
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property(emits_changed_signal = "false"))]
+    async fn available_cpu_schedulers(&self) -> fdo::Result<Vec<String>> {
+        self.cpu_scheduler_manager
+            .get_available_cpu_schedulers()
+            .await
+            .inspect_err(|message| error!("Error getting available CPU schedulers: {message}"))
+            .map(|v| v.into_iter().map(|s| s.to_string()).collect::<Vec<_>>())
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn cpu_scheduler(&self) -> fdo::Result<String> {
+        self.cpu_scheduler_manager
+            .get_cpu_scheduler()
+            .await
+            .inspect_err(|message| error!("Error getting CPU scheduler: {message}"))
+            .map(|s| s.to_string())
+            .map_err(to_zbus_fdo_error)
+    }
+
+    async fn set_cpu_scheduler(&mut self, scheduler: String) -> fdo::Result<()> {
+        let s = CpuScheduler::try_from(scheduler.as_str()).map_err(to_zbus_fdo_error)?;
+        self.cpu_scheduler_manager
+            .set_cpu_scheduler(s)
+            .await
+            .inspect_err(|message| error!("Error setting CPU scheduler: {message}"))
             .map_err(to_zbus_fdo_error)
     }
 

@@ -111,6 +111,30 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.CpuScheduler1
+      @short_description: Optional interface for adjusting CPU scheduler.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.CpuScheduler1">
+
+    <!--
+        AvailableCpuSchedulers:
+
+        Enumerate the supported CPU schedulers on the system.
+    -->
+    <property name="AvailableCpuSchedulers" type="as" access="read"/>
+    
+    <!--
+        CpuScheduler:
+
+        The current CPU scheduler used for the system's CPUs.
+
+        Valid schedulers can be found in AvailableCpuSchedulers.
+    -->
+    <property name="CpuScheduler" type="s" access="readwrite"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.FactoryReset1
       @short_description: Optional interface for hardware that has a factory
       reset functionality.

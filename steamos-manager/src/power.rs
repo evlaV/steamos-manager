@@ -16,7 +16,7 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use strum::{Display, EnumString, VariantNames};
+use strum::{Display, EnumIter, EnumString, VariantNames};
 use tokio::fs::{self, try_exists, File};
 use tokio::io::{AsyncWriteExt, Interest};
 use tokio::net::unix::pipe;
@@ -30,6 +30,7 @@ use crate::gpu::AMDGPU_HWMON_NAME;
 use crate::hardware::device_config;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::{TdpLimit1, MANAGER_PATH};
+use crate::systemd::{EnableState, SystemdUnit};
 use crate::Service;
 use crate::{path, write_synced};
 
@@ -66,6 +67,18 @@ pub enum CPUScalingGovernor {
     PowerSave,
     Performance,
     SchedUtil,
+}
+
+#[derive(Display, EnumIter, EnumString, Hash, Eq, PartialEq, Debug, Copy, Clone)]
+#[strum(serialize_all = "lowercase")]
+pub enum CpuScheduler {
+    None,
+    LAVD,
+}
+
+pub(crate) struct CpuSchedulerManager<'dbus> {
+    scx_unit: Option<SystemdUnit<'dbus>>,
+    current: CpuScheduler,
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -305,6 +318,83 @@ pub(crate) async fn set_cpu_scaling_governor(governor: CPUScalingGovernor) -> Re
     // Set the given governor on all cpus
     let name = governor.to_string();
     write_cpu_governor_sysfs_contents(name).await
+}
+
+impl<'dbus> CpuSchedulerManager<'dbus> {
+    pub async fn new(connection: Connection) -> Result<CpuSchedulerManager<'dbus>> {
+        // Try to create a SystemdUnit for scx.service; if systemd isn't available in the
+        // test DBus environment, treat the service as not installed instead of failing.
+        let scx_unit = match SystemdUnit::new(connection.clone(), "scx.service").await {
+            Ok(u) => Some(u),
+            Err(e) => {
+                warn!("Could not create SystemdUnit for scx.service: {e}");
+                None
+            }
+        };
+
+        let current = if let Some(ref u) = scx_unit {
+            match u.enabled().await {
+                Ok(EnableState::Enabled) => CpuScheduler::LAVD,
+                _ => CpuScheduler::None,
+            }
+        } else {
+            CpuScheduler::None
+        };
+
+        Ok(CpuSchedulerManager { scx_unit, current })
+    }
+
+    #[cfg(test)]
+    pub async fn is_supported() -> Result<bool> {
+        Ok(true)
+    }
+
+    #[cfg(not(test))]
+    pub async fn is_supported() -> Result<bool> {
+        if try_exists(path("/usr/bin/scx_lavd")).await? {
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub(crate) async fn get_available_cpu_schedulers(&self) -> Result<Vec<CpuScheduler>> {
+        let mut list = vec![CpuScheduler::None];
+        if self.scx_unit.is_some() {
+            list.push(CpuScheduler::LAVD);
+        }
+        Ok(list)
+    }
+
+    pub(crate) async fn get_cpu_scheduler(&self) -> Result<CpuScheduler> {
+        Ok(self.current)
+    }
+
+    pub(crate) async fn set_cpu_scheduler(&mut self, scheduler: CpuScheduler) -> Result<()> {
+        if self.current == scheduler {
+            return Ok(());
+        }
+
+        match scheduler {
+            CpuScheduler::None => {
+                // Stop the scx service if it's installed
+                if let Some(unit) = &self.scx_unit {
+                    unit.stop().await?;
+                }
+                self.current = CpuScheduler::None;
+            }
+            CpuScheduler::LAVD => {
+                // Start the scx service if it's installed
+                if let Some(unit) = &self.scx_unit {
+                    unit.start().await?;
+                    self.current = CpuScheduler::LAVD;
+                } else {
+                    // service not present; remain at None
+                    bail!("Cannot set CPU scheduler to LAVD; scx.service not installed");
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 async fn find_cpu_boost_driver() -> Result<(PathBuf, CpuBoostDriver)> {
