@@ -426,6 +426,36 @@ pub mod test {
     }
 
     #[tokio::test]
+    async fn board_lookup_rog_xbox_ally() {
+        let _h = setup_board("ASUSTeK COMPUTER INC.\n", "RC73YA\n", "INVALID\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("rog_ally"), String::from("RC73YA"))
+        );
+    }
+
+    #[tokio::test]
+    async fn board_lookup_rog_xbox_ally_x() {
+        let _h = setup_board("ASUSTeK COMPUTER INC.\n", "RC73XA\n", "INVALID\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("rog_ally_x"), String::from("RC73XA"))
+        );
+    }
+
+    #[tokio::test]
     async fn board_lookup_legion_go() {
         let _h = setup_board("LENOVO\n", "INVALID\n", "83E1\n")
             .await

@@ -10,6 +10,18 @@ dmi.board_name = "RC72LA"
 device = "rog_ally_x"
 variant = "RC72LA"
 
+[[device]]
+dmi.sys_vendor = "ASUSTeK COMPUTER INC."
+dmi.board_name = "RC73YA"
+device = "rog_ally"
+variant = "RC73YA"
+
+[[device]]
+dmi.sys_vendor = "ASUSTeK COMPUTER INC."
+dmi.board_name = "RC73XA"
+device = "rog_ally_x"
+variant = "RC73XA"
+
 [gpu_performance]
 driver = "amdgpu"
 
