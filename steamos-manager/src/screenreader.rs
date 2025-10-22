@@ -183,13 +183,11 @@ impl<'dbus> OrcaManager<'dbus> {
         &self.voices_by_language
     }
 
-    pub fn get_voices(&self) -> Result<Vec<String>> {
-        // Get the voices for the current locale only
-        let list = self.voices_by_language.get(&self.locale);
-        match list {
-            Some(l) => Ok(l.to_owned()),
-            None => Ok(Vec::new()),
-        }
+    pub fn get_voices(&self) -> Vec<String> {
+        self.voices_by_language
+            .get(&self.locale)
+            .cloned()
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -259,12 +257,10 @@ impl<'dbus> OrcaManager<'dbus> {
     }
 
     pub fn set_locale(&mut self, locale: &str) -> Result<()> {
-        if self.voices_by_language.contains_key(locale) {
-            self.locale = locale.to_string();
-        } else {
+        if !self.voices_by_language.contains_key(locale) {
             bail!("Invalid locale specified")
         }
-
+        self.locale = locale.to_string();
         Ok(())
     }
 

@@ -308,6 +308,9 @@ enum Commands {
         voice: String,
     },
 
+    /// Get screen reader voices for given locale
+    GetScreenReaderVoicesForLocale { locale: String },
+
     /// Trigger screen reader action
     TriggerScreenReaderAction {
         /// Valid actions are
@@ -779,6 +782,14 @@ async fn main() -> Result<()> {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
             let voices = proxy.get_voices().await?;
             println!("Voices:\n");
+            for voice in voices.iter().sorted() {
+                println!("- {voice}");
+            }
+        }
+        Commands::GetScreenReaderVoicesForLocale { locale } => {
+            let proxy = ScreenReader1Proxy::new(&conn).await?;
+            let voices = proxy.get_voices_for_locale(locale).await?;
+            println!("Voices for locale '{locale}':\n");
             for voice in voices.iter().sorted() {
                 println!("- {voice}");
             }

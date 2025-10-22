@@ -525,6 +525,17 @@
     </method>
 
     <!--
+        Get the list of voices for a given locale
+      
+        @locale: The locale to get voices for.
+        @voices: A list of voice names for the given locale.
+    -->
+    <method name="GetVoicesForLocale">
+      <arg type="s" name="locale" direction="in"/>
+      <arg type="as" name="voices" direction="out"/>
+    </method>
+
+    <!--
         Trigger Action
 
         Forward a user interaction event to the screen reader service.

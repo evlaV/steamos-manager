@@ -22,6 +22,9 @@ pub trait ScreenReader1 {
     /// GetVoices method
     fn get_voices(&self) -> zbus::Result<Vec<String>>;
 
+    /// GetVoicesForLocale method
+    fn get_voices_for_locale(&self, locale: &str) -> zbus::Result<Vec<String>>;
+
     /// TriggerAction method
     fn trigger_action(&self, action: &str, timestamp: u64) -> zbus::Result<()>;
 
