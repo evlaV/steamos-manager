@@ -865,6 +865,13 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                     FileFormat::Toml,
                 )
                 .await?;
+                let builder = read_config_directory(
+                    builder,
+                    path("/etc/steamos-manager/remotes.d"),
+                    FileFormat::Toml.file_extensions(),
+                    FileFormat::Toml,
+                )
+                .await?;
                 let config = builder.build().await?;
                 Ok(config.try_deserialize()?)
             }

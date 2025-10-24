@@ -22,8 +22,9 @@ install: target/release/steamos-manager target/release/steamosctl
 	install -d -m0755 "$(DESTDIR)/usr/share/dbus-1/system.d/"
 	install -d -m0755 "$(DESTDIR)/usr/share/steamos-manager/remotes.d/"
 	install -d -m0755 "$(DESTDIR)/usr/lib/systemd/system/"
-	install -d -m0755 "$(DESTDIR)/usr/lib/systemd/system/sddm.service.d"
+	install -d -m0755 "$(DESTDIR)/usr/lib/systemd/system/sddm.service.d/"
 	install -d -m0755 "$(DESTDIR)/usr/lib/systemd/user/"
+	install -d -m0755 "$(DESTDIR)/etc/steamos-manager/remotes.d/"
 
 	install -Ds -m755 "target/release/steamos-manager" "$(DESTDIR)/usr/lib/steamos-manager"
 	install -D -m755 "target/release/steamosctl" "$(DESTDIR)/usr/bin/steamosctl"
