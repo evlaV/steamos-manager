@@ -32,3 +32,15 @@ clippy:
   script:
     - pacman -Sy --noconfirm --needed rust clang speech-dispatcher
     - cargo clippy
+
+proxy:
+  stage: test
+  tags:
+    - x86_64-linux-kvm-docker
+  script:
+    - pacman -Sy --noconfirm --needed rust git zbus_xmlgen
+    - cd steamos-manager-proxy/src
+    - ./update_proxy.sh
+    - git status
+    - git diff
+    - git diff-index --quiet HEAD
