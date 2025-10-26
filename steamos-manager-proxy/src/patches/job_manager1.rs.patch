@@ -1,0 +1,11 @@
+diff --git a/steamos-manager-proxy/src/job_manager1.rs b/steamos-manager-proxy/src/job_manager1.rs
+index bb5af24..9e86bd7 100644
+--- a/steamos-manager-proxy/src/job_manager1.rs
++++ b/steamos-manager-proxy/src/job_manager1.rs
+@@ -15,4 +15,6 @@ use zbus::proxy;
+ #[proxy(
+     interface = "com.steampowered.SteamOSManager1.JobManager1",
++    default_service = "com.steampowered.SteamOSManager1",
++    default_path = "/com/steampowered/SteamOSManager1/Jobs",
+     assume_defaults = true
+ )]

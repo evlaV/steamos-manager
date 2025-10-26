@@ -1,0 +1,7 @@
+--- a/old
++++ b/new
+@@ -17,2 +17,4 @@ use zbus::proxy;
++    default_service = "com.steampowered.SteamOSManager1",
++    default_path = "/com/steampowered/SteamOSManager1",
+     assume_defaults = true
+ )]
