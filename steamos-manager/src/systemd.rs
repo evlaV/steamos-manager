@@ -68,6 +68,30 @@ trait SystemdManager {
 
 #[derive(Display, EnumString, PartialEq, Debug, Copy, Clone)]
 #[strum(serialize_all = "lowercase")]
+pub enum ActiveState {
+    Active,
+    Inactive,
+    Failed,
+    Activating,
+    Deactivating,
+    Reloading,
+    Refreshing,
+}
+
+impl ActiveState {
+    pub fn is_active(self) -> bool {
+        match self {
+            ActiveState::Active
+            | ActiveState::Activating
+            | ActiveState::Reloading
+            | ActiveState::Refreshing => true,
+            ActiveState::Inactive | ActiveState::Deactivating | ActiveState::Failed => false,
+        }
+    }
+}
+
+#[derive(Display, EnumString, PartialEq, Debug, Copy, Clone)]
+#[strum(serialize_all = "lowercase")]
 pub enum EnableState {
     Disabled,
     Enabled,
@@ -167,8 +191,10 @@ impl<'dbus> SystemdUnit<'dbus> {
         Ok(!res.is_empty())
     }
 
-    pub async fn active(&self) -> Result<bool> {
-        Ok(self.proxy.active_state().await? == "active")
+    pub async fn active(&self) -> Result<ActiveState> {
+        Ok(ActiveState::from_str(
+            self.proxy.active_state().await?.as_str(),
+        )?)
     }
 
     pub async fn enabled(&self) -> Result<EnableState> {
@@ -418,19 +444,19 @@ pub mod test {
         let unit = SystemdUnit::new(connection.clone(), "test.service")
             .await
             .expect("unit");
-        assert_eq!(unit.active().await.unwrap(), false);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
 
         assert!(unit.start().await.is_ok());
         assert_eq!(mock_unit.get().await.active, "active");
-        assert_eq!(unit.active().await.unwrap(), true);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
         assert!(unit.restart().await.is_ok());
         assert_eq!(mock_unit.get().await.active, "active");
-        assert_eq!(unit.active().await.unwrap(), true);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
         assert!(unit.stop().await.is_ok());
         assert_eq!(mock_unit.get().await.active, "inactive");
-        assert_eq!(unit.active().await.unwrap(), false);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
 
         assert_eq!(mock_unit.get().await.unit_file, "disabled");
         assert_eq!(unit.enabled().await.unwrap(), EnableState::Disabled);

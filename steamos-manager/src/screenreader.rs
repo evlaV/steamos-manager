@@ -651,6 +651,7 @@ impl<'dbus> OrcaManager<'dbus> {
 mod test {
     use super::*;
     use crate::systemd::test::MockUnit;
+    use crate::systemd::ActiveState;
     use crate::testing;
     use input_linux::{Key, KeyState};
     use std::time::Duration;
@@ -685,11 +686,11 @@ mod test {
             .expect("OrcaManager::new");
         manager.set_enabled(true).await.unwrap();
         assert_eq!(manager.enabled(), true);
-        assert_eq!(unit.active().await.unwrap(), true);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
         manager.set_enabled(false).await.unwrap();
         assert_eq!(manager.enabled(), false);
-        assert_eq!(unit.active().await.unwrap(), false);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
 
         copy(TEST_ORCA_SETTINGS, h.test.path().join(ORCA_SETTINGS))
             .await
@@ -698,11 +699,11 @@ mod test {
 
         manager.set_enabled(true).await.unwrap();
         assert_eq!(manager.enabled(), true);
-        assert_eq!(unit.active().await.unwrap(), true);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
         manager.set_enabled(false).await.unwrap();
         assert_eq!(manager.enabled(), false);
-        assert_eq!(unit.active().await.unwrap(), false);
+        assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
     }
 
     #[tokio::test]

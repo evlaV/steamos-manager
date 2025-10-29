@@ -147,7 +147,7 @@ impl SessionManager {
     async fn unit_is_active(&self, unit: &str) -> Result<bool> {
         let unit = SystemdUnit::new(self.connection.clone(), unit).await?;
         match unit.active().await {
-            Ok(b) => Ok(b),
+            Ok(state) => Ok(state.is_active()),
             Err(e) => {
                 let err: &fdo::Error = if let Some(e) = e.downcast_ref::<fdo::Error>() {
                     e

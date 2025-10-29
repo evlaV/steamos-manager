@@ -281,7 +281,7 @@ impl FanControl {
                 let jupiter_fan_control =
                     SystemdUnit::new(self.connection.clone(), service).await?;
                 let active = jupiter_fan_control.active().await?;
-                Ok(if active {
+                Ok(if active.is_active() {
                     FanControlState::Os
                 } else {
                     FanControlState::Bios
