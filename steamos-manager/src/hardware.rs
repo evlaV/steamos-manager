@@ -161,11 +161,18 @@ pub(crate) struct TdpLimitConfig {
 
 impl DeviceConfig {
     pub(crate) async fn device_match(&self) -> Result<Option<&'_ DeviceMatch>> {
-        let sys_vendor = read_to_string(path(SYS_VENDOR_PATH)).await?;
+        let unknown = String::from("unknown");
+        let sys_vendor = read_to_string(path(SYS_VENDOR_PATH))
+            .await
+            .unwrap_or(unknown.clone());
         let sys_vendor = sys_vendor.trim_end();
-        let board_name = read_to_string(path(BOARD_NAME_PATH)).await?;
+        let board_name = read_to_string(path(BOARD_NAME_PATH))
+            .await
+            .unwrap_or(unknown.clone());
         let board_name = board_name.trim_end();
-        let product_name = read_to_string(path(PRODUCT_NAME_PATH)).await?;
+        let product_name = read_to_string(path(PRODUCT_NAME_PATH))
+            .await
+            .unwrap_or(unknown.clone());
         let product_name = product_name.trim_end();
 
         for device in &self.device {
