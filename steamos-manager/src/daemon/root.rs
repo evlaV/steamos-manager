@@ -168,17 +168,11 @@ impl DaemonContext for RootContext {
 
 pub(crate) type Command = DaemonCommand<RootCommand>;
 
-async fn create_connection(channel: Sender<Command>) -> Result<Connection> {
-    let connection = Builder::system()?
+async fn create_connection() -> Result<Connection> {
+    Ok(Builder::system()?
         .name("com.steampowered.SteamOSManager1")?
         .build()
-        .await?;
-    let manager = SteamOSManager::new(connection.clone(), channel).await?;
-    connection
-        .object_server()
-        .at("/com/steampowered/SteamOSManager1", manager)
-        .await?;
-    Ok(connection)
+        .await?)
 }
 
 pub async fn daemon() -> Result<()> {
@@ -191,7 +185,7 @@ pub async fn daemon() -> Result<()> {
         .with(EnvFilter::from_default_env());
     let (tx, rx) = channel::<RootContext>();
 
-    let connection = match create_connection(tx.clone()).await {
+    let connection = match create_connection().await {
         Ok(c) => c,
         Err(e) => {
             let _guard = tracing::subscriber::set_default(subscriber);
@@ -199,6 +193,12 @@ pub async fn daemon() -> Result<()> {
             bail!(e);
         }
     };
+    let manager = SteamOSManager::new(connection.clone(), tx.clone()).await?;
+    connection
+        .object_server()
+        .at("/com/steampowered/SteamOSManager1", manager)
+        .await?;
+
     let log_receiver = LogReceiver::new(connection.clone()).await?;
     let remote_logger = LogLayer::new(&log_receiver);
     let subscriber = subscriber.with(remote_logger);

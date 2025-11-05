@@ -25,7 +25,7 @@ use zbus::fdo::PeerProxy;
 
 use crate::daemon::{channel, Daemon, DaemonCommand, DaemonContext};
 use crate::job::{JobManager, JobManagerService};
-use crate::manager::user::{create_interfaces, SignalRelayService};
+use crate::manager::user::create_interfaces;
 use crate::path;
 use crate::power::TdpManagerService;
 use crate::session::SessionManagerState;
@@ -131,15 +131,7 @@ impl DaemonContext for UserContext {
 
 pub(crate) type Command = DaemonCommand<UserCommand>;
 
-async fn create_connections(
-    channel: Sender<Command>,
-) -> Result<(
-    Connection,
-    Connection,
-    JobManagerService,
-    Result<TdpManagerService>,
-    SignalRelayService,
-)> {
+async fn create_connections() -> Result<(Connection, Connection)> {
     let system = Connection::system().await?;
     // Ensure the root daemon is running, or start it if it's not
     for _ in 0..5 {
@@ -160,28 +152,7 @@ async fn create_connections(
         .build()
         .await?;
 
-    let (jm_tx, rx) = unbounded_channel();
-    let job_manager = JobManager::new(connection.clone()).await?;
-    let jm_service = JobManagerService::new(job_manager, rx, system.clone());
-
-    let (tdp_tx, rx) = unbounded_channel();
-    let tdp_service = TdpManagerService::new(rx, &system, &connection).await;
-    let tdp_tx = if tdp_service.is_ok() {
-        Some(tdp_tx)
-    } else {
-        None
-    };
-
-    let signal_relay_service =
-        create_interfaces(connection.clone(), system.clone(), channel, jm_tx, tdp_tx).await?;
-
-    Ok((
-        connection,
-        system,
-        jm_service,
-        tdp_service,
-        signal_relay_service,
-    ))
+    Ok((connection, system))
 }
 
 pub async fn daemon() -> Result<()> {
@@ -195,14 +166,28 @@ pub async fn daemon() -> Result<()> {
     set_global_default(subscriber)?;
     let (tx, rx) = channel::<UserContext>();
 
-    let (session, _system, mirror_service, tdp_service, signal_relay_service) =
-        match create_connections(tx.clone()).await {
-            Ok(c) => c,
-            Err(e) => {
-                error!("Error connecting to DBus: {}", e);
-                bail!(e);
-            }
-        };
+    let (session, system) = match create_connections().await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Error connecting to DBus: {}", e);
+            bail!(e);
+        }
+    };
+
+    let (jm_tx, jm_rx) = unbounded_channel();
+    let job_manager = JobManager::new(session.clone()).await?;
+    let jm_service = JobManagerService::new(job_manager, jm_rx, system.clone());
+
+    let (tdp_tx, tdp_rx) = unbounded_channel();
+    let tdp_service = TdpManagerService::new(tdp_rx, &system, &session).await;
+    let tdp_tx = if tdp_service.is_ok() {
+        Some(tdp_tx)
+    } else {
+        None
+    };
+
+    let signal_relay_service =
+        create_interfaces(session.clone(), system.clone(), tx.clone(), jm_tx, tdp_tx).await?;
 
     let mut daemon = Daemon::new(session.clone(), rx).await?;
     let context = UserContext {
@@ -212,7 +197,7 @@ pub async fn daemon() -> Result<()> {
     };
 
     daemon.add_service(signal_relay_service);
-    daemon.add_service(mirror_service);
+    daemon.add_service(jm_service);
     if let Ok(tdp_service) = tdp_service {
         daemon.add_service(tdp_service);
     } else if let Err(e) = tdp_service {
