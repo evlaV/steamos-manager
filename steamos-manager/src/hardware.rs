@@ -9,7 +9,9 @@ use anyhow::{bail, ensure, Result};
 use num_enum::TryFromPrimitive;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
+use std::io::ErrorKind;
 use std::num::NonZeroU32;
+use std::path::Path;
 use std::str::FromStr;
 use strum::{Display, EnumString, VariantNames};
 use tokio::fs::{read_dir, read_to_string};
@@ -159,24 +161,34 @@ pub(crate) struct TdpLimitConfig {
     pub firmware_attribute: Option<FirmwareAttributeConfig>,
 }
 
+async fn try_read_to_string<S: AsRef<Path>>(path: S) -> std::io::Result<Option<String>> {
+    match read_to_string(path.as_ref()).await {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 impl DeviceConfig {
     pub(crate) async fn device_match(&self) -> Result<Option<&'_ DeviceMatch>> {
-        let sys_vendor = read_to_string(path(SYS_VENDOR_PATH)).await?;
+        let Some(sys_vendor) = try_read_to_string(path(SYS_VENDOR_PATH)).await? else {
+            return Ok(None);
+        };
         let sys_vendor = sys_vendor.trim_end();
-        let board_name = read_to_string(path(BOARD_NAME_PATH)).await?;
-        let board_name = board_name.trim_end();
-        let product_name = read_to_string(path(PRODUCT_NAME_PATH)).await?;
-        let product_name = product_name.trim_end();
+        let board_name = try_read_to_string(path(BOARD_NAME_PATH)).await?;
+        let board_name = board_name.as_ref().map(|name| name.trim_end());
+        let product_name = try_read_to_string(path(PRODUCT_NAME_PATH)).await?;
+        let product_name = product_name.as_ref().map(|name| name.trim_end());
 
         for device in &self.device {
             if let Some(dmi) = &device.dmi {
                 if dmi.sys_vendor != sys_vendor {
                     continue;
                 }
-                if Some(board_name) == dmi.board_name.as_deref() {
+                if board_name.is_some() && board_name == dmi.board_name.as_deref() {
                     return Ok(Some(device));
                 }
-                if Some(product_name) == dmi.product_name.as_deref() {
+                if product_name.is_some() && product_name == dmi.product_name.as_deref() {
                     return Ok(Some(device));
                 }
             }
@@ -240,7 +252,9 @@ pub(crate) async fn device_config() -> Result<Option<DeviceConfig>> {
 }
 
 pub(crate) async fn steam_deck_variant() -> Result<SteamDeckVariant> {
-    let sys_vendor = read_to_string(path(SYS_VENDOR_PATH)).await?;
+    let Some(sys_vendor) = try_read_to_string(path(SYS_VENDOR_PATH)).await? else {
+        return Ok(SteamDeckVariant::Unknown);
+    };
     if sys_vendor.trim_end() != "Valve" {
         return Ok(SteamDeckVariant::Unknown);
     }
@@ -378,6 +392,19 @@ pub mod test {
         write(path(PRODUCT_NAME_PATH), product_name).await?;
         h.test.device_config.replace(DeviceConfig::load().await?);
         Ok(h)
+    }
+
+    #[tokio::test]
+    async fn board_lookup_missing() {
+        let _h = testing::start();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("unknown"), String::from("unknown"))
+        );
     }
 
     #[tokio::test]
