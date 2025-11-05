@@ -87,7 +87,8 @@ impl SteamOSManager {
                 .await
                 .inspect_err(|e| info!("Could not set up GPU power profile management: {e}"))
                 .ok(),
-            should_trace: steam_deck_variant().await? == SteamDeckVariant::Galileo,
+            should_trace: steam_deck_variant().await.unwrap_or_default()
+                == SteamDeckVariant::Galileo,
             job_manager: JobManager::new(connection.clone()).await?,
             cpu_scheduler_manager: CpuSchedulerManager::new(connection.clone()).await?,
             connection,
