@@ -1607,8 +1607,13 @@ pub(crate) async fn create_interfaces(
     let object_server = session.object_server();
     object_server.at(MANAGER_PATH, manager).await?;
 
-    create_device_interfaces(&proxy, object_server, tdp_manager).await?;
-    create_platform_interfaces(&proxy, object_server, &system, &job_manager).await?;
+    if let Err(e) = create_device_interfaces(&proxy, object_server, tdp_manager).await {
+        error!("Failed to initalize device-specific interfaces: {e}");
+    }
+
+    if let Err(e) = create_platform_interfaces(&proxy, object_server, &system, &job_manager).await {
+        error!("Failed to initalize platform-specific interfaces: {e}");
+    }
 
     if device_type().await.unwrap_or_default() == "steam_deck" {
         object_server.at(MANAGER_PATH, als).await?;
