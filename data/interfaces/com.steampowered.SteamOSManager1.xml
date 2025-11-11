@@ -319,7 +319,7 @@
         on. If the device or variant isn't known the applicable fields will be
         "unknown" instead.
     -->
-    <property name="DeviceModel" type="ss" access="read"/>
+    <property name="DeviceModel" type="(ss)" access="read"/>
 
   </interface>
 
