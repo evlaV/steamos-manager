@@ -1,6 +1,6 @@
 [Unit]
 Description=SteamOS Manager Daemon
-After=gamescope.service
+After=gamescope.service gamescope-session.service
 StartLimitIntervalSec=120
 StartLimitBurst=5
 
