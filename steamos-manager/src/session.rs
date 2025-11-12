@@ -25,7 +25,7 @@ use zbus::{fdo, Connection};
 
 use crate::daemon::user::{Command as DaemonCommand, UserCommand};
 use crate::manager::root::RootManagerProxy;
-use crate::systemd::{ActiveState, SystemdUnit};
+use crate::systemd::{ActiveState, JobMode, SystemdUnit};
 use crate::{path, Service};
 
 const CONFIG_PREFIX: &str = "/etc/sddm.conf.d";
@@ -203,7 +203,7 @@ impl SessionManager {
     async fn logout(&self) -> Result<()> {
         SystemdUnit::new(self.connection.clone(), "graphical-session.target")
             .await?
-            .stop()
+            .stop(JobMode::Fail)
             .await
     }
 

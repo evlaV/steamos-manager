@@ -32,7 +32,7 @@ use zbus::Connection;
 
 #[cfg(test)]
 use crate::path;
-use crate::systemd::SystemdUnit;
+use crate::systemd::{JobMode, SystemdUnit};
 use crate::uinput::UInputDevice;
 
 #[cfg(test)]
@@ -638,12 +638,12 @@ impl<'dbus> OrcaManager<'dbus> {
 
     async fn restart_orca(&self) -> Result<()> {
         trace!("Restarting orca...");
-        self.orca_unit.restart().await
+        self.orca_unit.restart(JobMode::Fail).await
     }
 
     pub async fn stop_orca(&self) -> Result<()> {
         trace!("Stopping orca...");
-        self.orca_unit.stop().await
+        self.orca_unit.stop(JobMode::Fail).await
     }
 }
 

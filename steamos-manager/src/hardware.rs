@@ -25,7 +25,7 @@ use crate::path;
 use crate::platform::{platform_config, ServiceConfig};
 use crate::power::TdpLimitingMethod;
 use crate::process::{run_script, script_exit_code};
-use crate::systemd::SystemdUnit;
+use crate::systemd::{JobMode, SystemdUnit};
 
 #[cfg(not(test))]
 static DEVICE_CONFIG: OnceCell<Option<DeviceConfig>> = OnceCell::const_new();
@@ -325,8 +325,8 @@ impl FanControl {
                 let jupiter_fan_control =
                     SystemdUnit::new(self.connection.clone(), service).await?;
                 match state {
-                    FanControlState::Os => jupiter_fan_control.start().await,
-                    FanControlState::Bios => jupiter_fan_control.stop().await,
+                    FanControlState::Os => jupiter_fan_control.start(JobMode::Fail).await,
+                    FanControlState::Bios => jupiter_fan_control.stop(JobMode::Fail).await,
                 }
             }
             Some(ServiceConfig::Script {
@@ -758,7 +758,7 @@ pub mod test {
         }
 
         async fn start(&mut self, mode: &str) -> fdo::Result<OwnedObjectPath> {
-            if mode != "fail" {
+            if JobMode::from_str(mode).is_err() {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
             self.active = true;
@@ -767,7 +767,7 @@ pub mod test {
         }
 
         async fn stop(&mut self, mode: &str) -> fdo::Result<OwnedObjectPath> {
-            if mode != "fail" {
+            if JobMode::from_str(mode).is_err() {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
             self.active = false;
