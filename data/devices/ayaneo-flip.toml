@@ -1,0 +1,26 @@
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "FLIP DS"
+device = "ayaneo_flip_ds"
+variant = "DS"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "FLIP 1S DS"
+device = "ayaneo_flip_ds"
+variant = "1S DS"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "FLIP KB"
+device = "ayaneo_flip_kb"
+variant = "KB"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

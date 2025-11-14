@@ -1,0 +1,38 @@
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO 2"
+device = "ayaneo_2"
+variant = "2"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO 2S"
+device = "ayaneo_2"
+variant = "2S"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "GEEK"
+device = "ayaneo_2"
+variant = "GEEK"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "GEEK 1S"
+device = "ayaneo_2"
+variant = "GEEK 1S"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO GEEK 1S"
+device = "ayaneo_2"
+variant = "GEEK 1S"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

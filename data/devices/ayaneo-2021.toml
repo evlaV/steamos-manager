@@ -1,0 +1,38 @@
+[[device]]
+dmi.sys_vendor = "AYA NEO"
+dmi.product_name = "AYA NEO FOUNDER"
+device = "ayaneo_2021"
+variant = "FOUNDER"
+
+[[device]]
+dmi.sys_vendor = "AYA NEO"
+dmi.product_name = "AYA NEO 2021"
+device = "ayaneo_2021"
+variant = "AYA NEO 2021"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO 2021"
+device = "ayaneo_2021"
+variant = "AYANEO 2021"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO 2021 Pro"
+device = "ayaneo_2021"
+variant = "AYANEO 2021 Pro"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO 2021 Pro Retro Power"
+device = "ayaneo_2021"
+variant = "AYANEO 2021 Pro Retro Power"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

@@ -1,0 +1,26 @@
+[[device]]
+dmi.sys_vendor = "ayn"
+dmi.product_name = "Loki Max"
+device = "ayn_loki"
+variant = "Max"
+
+[[device]]
+dmi.sys_vendor = "ayn"
+dmi.product_name = "Loki MiniPro"
+device = "ayn_loki"
+variant = "MiniPro"
+
+[[device]]
+dmi.sys_vendor = "ayn"
+dmi.product_name = "Loki Zero"
+device = "ayn_loki"
+variant = "Zero"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

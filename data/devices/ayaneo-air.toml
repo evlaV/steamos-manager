@@ -1,0 +1,52 @@
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AIR"
+device = "ayaneo_air"
+variant = "AIR"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AIR Pro"
+device = "ayaneo_air"
+variant = "AIR Pro"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AIR 1S"
+device = "ayaneo_air_1s"
+variant = "AIR 1S"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AIR 1S Limited"
+device = "ayaneo_air_1s"
+variant = "AIR 1S Limited"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AIR 1S Limited"
+device = "ayaneo_air_1s"
+variant = "AIR 1S Limited"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AIR Plus"
+dmi.board_name = "AB05-AMD"
+device = "ayaneo_air_plus"
+variant = "AIR Plus"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AIR Plus"
+dmi.board_name = "AB05-Mendocino"
+device = "ayaneo_air_plus"
+variant = "AIR Plus Mendocino"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

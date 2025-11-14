@@ -1,0 +1,14 @@
+[[device]]
+dmi.sys_vendor = "Anbernic"
+dmi.product_name = "Win600"
+device = "anbernic_win600"
+variant = "Win600"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

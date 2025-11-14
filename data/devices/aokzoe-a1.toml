@@ -1,0 +1,26 @@
+[[device]]
+dmi.sys_vendor = "AOKZOE"
+dmi.product_name = "AOKZOE A1 AR07"
+device = "aokzoe_a1"
+variant = "A1 AR07"
+
+[[device]]
+dmi.sys_vendor = "AOKZOE"
+dmi.product_name = "AOKZOE A1 Pro"
+device = "aokzoe_a1"
+variant = "A1 Pro"
+
+[[device]]
+dmi.sys_vendor = "AOKZOE"
+dmi.product_name = "AOKZOE A1X"
+device = "aokzoe_a1"
+variant = "A1X"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

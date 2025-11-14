@@ -1,0 +1,26 @@
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER 2 ARP23"
+device = "onexplayer_2"
+variant = "ARP23"
+
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER 2 PRO ARP23"
+device = "onexplayer_2"
+variant = "PRO ARP23"
+
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER 2 PRO ARP23 EVA-01"
+device = "onexplayer_2"
+variant = "PRO ARP23 EVA-01"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

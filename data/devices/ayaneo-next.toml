@@ -1,0 +1,50 @@
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO NEXT"
+device = "ayaneo_next"
+variant = "NEXT"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "NEXT"
+device = "ayaneo_next"
+variant = "NEXT"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO NEXT Advance"
+device = "ayaneo_next"
+variant = "NEXT Advance"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "NEXT Advance"
+device = "ayaneo_next"
+variant = "NEXT Advance"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO NEXT Pro"
+device = "ayaneo_next"
+variant = "NEXT Pro"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "NEXT Pro"
+device = "ayaneo_next"
+variant = "NEXT Pro"
+
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "NEXT Lite"
+device = "ayaneo_next"
+variant = "NEXT Lite"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

@@ -1,0 +1,20 @@
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER F1"
+device = "onexplayer_f1"
+variant = "F1"
+
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER F1Pro"
+device = "onexplayer_f1"
+variant = "F1Pro"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

@@ -1,0 +1,32 @@
+[[device]]
+dmi.sys_vendor = "GPD"
+dmi.product_name = "G1618-03"
+device = "gpd_win3"
+variant = "G1618-03"
+
+[[device]]
+dmi.sys_vendor = "GPD"
+dmi.product_name = "G1618-04"
+device = "gpd_win4"
+variant = "G1618-04"
+
+[[device]]
+dmi.sys_vendor = "GPD"
+dmi.product_name = "G1619-04"
+device = "gpd_win_max_2"
+variant = "G1619-04"
+
+[[device]]
+dmi.sys_vendor = "GPD"
+dmi.product_name = "G1617-01"
+device = "gpd_win_mini"
+variant = "G1617-01"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]

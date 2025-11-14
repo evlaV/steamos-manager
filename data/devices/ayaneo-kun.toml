@@ -1,0 +1,14 @@
+[[device]]
+dmi.sys_vendor = "AYANEO"
+dmi.product_name = "AYANEO KUN"
+device = "ayaneo_kun"
+variant = "KUN"
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard", "mouse"]
