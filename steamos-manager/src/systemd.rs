@@ -9,7 +9,6 @@ use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum::{Display, EnumString};
-use zbus::proxy::CacheProperties;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{self, Connection};
 
@@ -133,7 +132,6 @@ impl<'dbus> SystemdUnit<'dbus> {
         let path = String::from(path.to_str().ok_or(anyhow!("Unit name {name} invalid"))?);
         Ok(SystemdUnit {
             proxy: SystemdUnitProxy::builder(&connection)
-                .cache_properties(CacheProperties::No)
                 .path(path)?
                 .build()
                 .await?,
@@ -225,6 +223,7 @@ pub mod test {
     use std::collections::HashMap;
     use std::time::Duration;
     use tokio::time::sleep;
+    use zbus::object_server::SignalEmitter;
     use zbus::zvariant::ObjectPath;
     use zbus::{fdo, ObjectServer};
 
@@ -269,7 +268,11 @@ pub mod test {
             Ok(self.unit_file.clone())
         }
 
-        async fn restart(&mut self, mode: &str) -> fdo::Result<OwnedObjectPath> {
+        async fn restart(
+            &mut self,
+            mode: &str,
+            #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+        ) -> fdo::Result<OwnedObjectPath> {
             if mode != "fail" {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
@@ -277,10 +280,15 @@ pub mod test {
                 .map_err(to_zbus_fdo_error)?;
             self.job += 1;
             self.active = String::from("active");
+            self.active_state_changed(&ctx).await?;
             Ok(path.into())
         }
 
-        async fn start(&mut self, mode: &str) -> fdo::Result<OwnedObjectPath> {
+        async fn start(
+            &mut self,
+            mode: &str,
+            #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+        ) -> fdo::Result<OwnedObjectPath> {
             if mode != "fail" {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
@@ -288,10 +296,15 @@ pub mod test {
                 .map_err(to_zbus_fdo_error)?;
             self.job += 1;
             self.active = String::from("active");
+            self.active_state_changed(&ctx).await?;
             Ok(path.into())
         }
 
-        async fn stop(&mut self, mode: &str) -> fdo::Result<OwnedObjectPath> {
+        async fn stop(
+            &mut self,
+            mode: &str,
+            #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+        ) -> fdo::Result<OwnedObjectPath> {
             if mode != "fail" {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
@@ -299,6 +312,7 @@ pub mod test {
                 .map_err(to_zbus_fdo_error)?;
             self.job += 1;
             self.active = String::from("inactive");
+            self.active_state_changed(&ctx).await?;
             Ok(path.into())
         }
     }
@@ -329,7 +343,9 @@ pub mod test {
                     .interface::<_, MockUnit>(path.to_string_lossy())
                     .await;
                 if let Ok(mock_unit) = mock_unit {
-                    mock_unit.get_mut().await.unit_file = String::from("enabled");
+                    let mut unit = mock_unit.get_mut().await;
+                    unit.unit_file = String::from("enabled");
+                    unit.unit_file_state_changed(mock_unit.signal_emitter()).await?;
                 }
             }
             Ok((true, res))
@@ -357,7 +373,9 @@ pub mod test {
                     .interface::<_, MockUnit>(path.to_string_lossy())
                     .await;
                 if let Ok(mock_unit) = mock_unit {
-                    mock_unit.get_mut().await.unit_file = String::from("disabled");
+                    let mut unit = mock_unit.get_mut().await;
+                    unit.unit_file = String::from("disabled");
+                    unit.unit_file_state_changed(mock_unit.signal_emitter()).await?;
                 }
             }
             Ok(res)
