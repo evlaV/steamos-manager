@@ -186,7 +186,7 @@ pub async fn daemon() -> Result<()> {
         None
     };
 
-    let signal_relay_service =
+    let (signal_relay_service, session_manager_service, screenreader_setup_service) =
         create_interfaces(session.clone(), system.clone(), tx.clone(), jm_tx, tdp_tx).await?;
 
     let mut daemon = Daemon::new(session.clone(), rx).await?;
@@ -197,6 +197,12 @@ pub async fn daemon() -> Result<()> {
     };
 
     daemon.add_service(signal_relay_service);
+    if let Some(service) = screenreader_setup_service {
+        daemon.add_service(service);
+    }
+    if let Some(service) = session_manager_service {
+        daemon.add_service(service);
+    }
     daemon.add_service(jm_service);
     if let Ok(tdp_service) = tdp_service {
         daemon.add_service(tdp_service);

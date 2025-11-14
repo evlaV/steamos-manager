@@ -16,7 +16,7 @@ use zbus::{self, Connection};
     interface = "org.freedesktop.systemd1.Unit",
     default_service = "org.freedesktop.systemd1"
 )]
-trait SystemdUnit {
+pub(crate) trait SystemdUnit {
     #[zbus(property)]
     fn active_state(&self) -> zbus::Result<String>;
     #[zbus(property)]
@@ -100,7 +100,7 @@ pub enum EnableState {
 
 pub struct SystemdUnit<'dbus> {
     connection: Connection,
-    proxy: SystemdUnitProxy<'dbus>,
+    pub(crate) proxy: SystemdUnitProxy<'dbus>,
     name: String,
 }
 
@@ -345,7 +345,8 @@ pub mod test {
                 if let Ok(mock_unit) = mock_unit {
                     let mut unit = mock_unit.get_mut().await;
                     unit.unit_file = String::from("enabled");
-                    unit.unit_file_state_changed(mock_unit.signal_emitter()).await?;
+                    unit.unit_file_state_changed(mock_unit.signal_emitter())
+                        .await?;
                 }
             }
             Ok((true, res))
@@ -375,7 +376,8 @@ pub mod test {
                 if let Ok(mock_unit) = mock_unit {
                     let mut unit = mock_unit.get_mut().await;
                     unit.unit_file = String::from("disabled");
-                    unit.unit_file_state_changed(mock_unit.signal_emitter()).await?;
+                    unit.unit_file_state_changed(mock_unit.signal_emitter())
+                        .await?;
                 }
             }
             Ok(res)

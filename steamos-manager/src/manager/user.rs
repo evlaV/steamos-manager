@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs::try_exists;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 use zbus::message::Header;
@@ -41,7 +41,10 @@ use crate::power::{
     TdpManagerCommand,
 };
 use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
-use crate::session::{is_session_managed, valid_desktop_sessions, LoginMode, SessionManager};
+use crate::session::{
+    is_session_managed, valid_desktop_sessions, LoginMode, SessionManager, SessionManagerMessage,
+    SessionManagerService,
+};
 use crate::wifi::{
     get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces, WifiBackend,
 };
@@ -231,6 +234,11 @@ struct WifiPowerManagement1 {
 pub(crate) struct SignalRelayService {
     proxy: Proxy<'static>,
     session: Connection,
+}
+
+pub(crate) struct ScreenReaderSetupService {
+    session: Connection,
+    channel: broadcast::Receiver<SessionManagerMessage>,
 }
 
 impl SteamOSManager {
@@ -1411,6 +1419,56 @@ impl Service for SignalRelayService {
     }
 }
 
+impl Service for ScreenReaderSetupService {
+    const NAME: &'static str = "screenreader-setup";
+
+    async fn run(&mut self) -> Result<()> {
+        if !try_exists(path("/usr/bin/orca")).await? {
+            return Ok(());
+        }
+
+        let object_server = self.session.object_server();
+        let orca_manager = OrcaManager::new(&self.session).await?;
+        let screen_reader = Arc::new(Mutex::new(orca_manager));
+
+        loop {
+            match self.channel.recv().await {
+                Ok(SessionManagerMessage::LoginModeChanged(LoginMode::Game)) => {
+                    if object_server
+                        .interface::<_, ScreenReader0>(MANAGER_PATH)
+                        .await
+                        .is_ok()
+                        || object_server
+                            .interface::<_, ScreenReader1>(MANAGER_PATH)
+                            .await
+                            .is_ok()
+                    {
+                        continue;
+                    }
+                    let screen_reader0 = ScreenReader0::new(screen_reader.clone()).await?;
+                    let screen_reader1 = ScreenReader1::new(screen_reader.clone()).await?;
+
+                    object_server.at(MANAGER_PATH, screen_reader0).await?;
+                    object_server.at(MANAGER_PATH, screen_reader1).await?;
+                }
+                Ok(SessionManagerMessage::LoginModeChanged(LoginMode::Desktop)) => {
+                    let _ = screen_reader
+                        .lock()
+                        .await
+                        .stop_orca()
+                        .await
+                        .inspect_err(|err| {
+                            warn!("Could not stop orca when entering desktop mode: {err}")
+                        });
+                    let _ = object_server.remove::<ScreenReader0, _>(MANAGER_PATH).await;
+                    let _ = object_server.remove::<ScreenReader1, _>(MANAGER_PATH).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+}
+
 async fn create_platform_interfaces(
     proxy: &Proxy<'static>,
     object_server: &ObjectServer,
@@ -1554,7 +1612,11 @@ pub(crate) async fn create_interfaces(
     daemon: Sender<Command>,
     job_manager: UnboundedSender<JobManagerCommand>,
     tdp_manager: Option<UnboundedSender<TdpManagerCommand>>,
-) -> Result<SignalRelayService> {
+) -> Result<(
+    SignalRelayService,
+    Option<SessionManagerService>,
+    Option<ScreenReaderSetupService>,
+)> {
     let proxy = Builder::<Proxy>::new(&system)
         .destination("com.steampowered.SteamOSManager1")?
         .path("/com/steampowered/SteamOSManager1")?
@@ -1589,10 +1651,6 @@ pub(crate) async fn create_interfaces(
         proxy: proxy.clone(),
         channel: daemon.clone(),
     };
-    let orca_manager = OrcaManager::new(&session).await?;
-    let screen_reader = Arc::new(Mutex::new(orca_manager));
-    let screen_reader0 = ScreenReader0::new(screen_reader.clone()).await?;
-    let screen_reader1 = ScreenReader1::new(screen_reader).await?;
     let session_management = SessionManagement1 {
         proxy: proxy.clone(),
         manager: SessionManager::new(session.clone(), &system, daemon).await?,
@@ -1685,14 +1743,42 @@ pub(crate) async fn create_interfaces(
         object_server.at(MANAGER_PATH, audio_manager).await?;
     }
 
-    if session_management.manager.current_login_mode().await? == LoginMode::Game
-        && try_exists(path("/usr/bin/orca")).await?
-    {
-        object_server.at(MANAGER_PATH, screen_reader0).await?;
-        object_server.at(MANAGER_PATH, screen_reader1).await?;
-    }
-
+    let mut session_manager_service = None;
+    let mut screenreader_setup_service = None;
     if is_session_managed().await? {
+        match session_management.manager.create_service().await {
+            Ok((service, channel)) => {
+                session_manager_service = Some(service);
+                screenreader_setup_service = Some(ScreenReaderSetupService {
+                    session: session.clone(),
+                    channel,
+                });
+            }
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<fdo::Error>(),
+                    Some(fdo::Error::UnknownObject(_))
+                ) => {}
+            Err(e) => {
+                let mut silent = false;
+                if let Some(zbus::Error::FDO(e)) = e.downcast_ref::<zbus::Error>() {
+                    if matches!(**e, fdo::Error::UnknownObject(_)) {
+                        silent = true;
+                    }
+                } else if let Some(zbus::Error::MethodError(name, _, _)) =
+                    e.downcast_ref::<zbus::Error>()
+                {
+                    if name.as_str() == "org.freedesktop.DBus.Error.UnknownObject" {
+                        silent = true;
+                    }
+                }
+                if !silent {
+                    error!(
+                        "Could not set up session management service; screen reader will not work: {e}"
+                    );
+                }
+            }
+        }
         object_server.at(MANAGER_PATH, session_management).await?;
     }
 
@@ -1702,7 +1788,14 @@ pub(crate) async fn create_interfaces(
             .await?;
     }
 
-    Ok(SignalRelayService { proxy, session })
+    Ok((
+        SignalRelayService {
+            proxy,
+            session: session.clone(),
+        },
+        session_manager_service,
+        screenreader_setup_service,
+    ))
 }
 
 #[cfg(test)]
