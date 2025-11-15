@@ -3,7 +3,7 @@
 SteamOS Manager is a system daemon that aims to abstract Steam's interactions
 with the operating system. The goal is to have a standardized interface so that
 SteamOS specific features in the Steam client, e.g. TDP management, can be
-exposed in any linux distro that provides an implementation of this DBus API.
+exposed in any Linux distro that provides an implementation of this DBus API.
 
 The interface may be fully or partially implemented. The Steam client will
 check which which features are available at startup and restrict the settings
@@ -15,7 +15,7 @@ Some of the features that SteamOS Manager enables include:
 - BIOS/Dock updates
 - Storage device maintenance tasks
 - External storage device formatting
-  - Steam geneally performs device enumeration via UDisks2, but formatting
+  - Steam generally performs device enumeration via UDisks2, but formatting
 	happens via SteamOSManager
 
 For a full list of features please refer to the [interface specification](https://gitlab.steamos.cloud/holo/steamos-manager/-/blob/master/data/interfaces/com.steampowered.SteamOSManager1.xml).
