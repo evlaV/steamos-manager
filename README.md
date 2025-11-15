@@ -106,3 +106,34 @@ If the new functionality requires elevated privileges, instead extend the
 system daemon's DBus API in `src/manager/root.rs` with the necessary helpers to
 complete the task. However, you should keep as much logic as possible in the
 user daemon.
+
+# Interoperability
+
+While SteamOS Manager aims to support as broad of a range of hardware
+internally as possible, sometimes external tools support things better. To that
+end, external daemon an register their own remote implementation of various
+interfaces that SteamOS Manager will relay DBus traffic to and from. At the
+current time a remote implementation cannot override a local implementation;
+they can only fill in holes where a local implementation does not exist.
+
+To register a remote interface, the daemon must place a TOML file in either
+`/usr/share/steamos-manager/remotes.d` or `/etc/steamos-manager/remotes.d`
+specifying information about the remote. The TOML file should contain sections
+named based on the interface it implements, along with a `bus_name` key
+specifying the well-known bus name of the remote and an `object_path` key
+specifying the path on that remote to the object that implements the interface.
+Currently the remote must be on the system bus, not the session bus.
+
+New remote configurations cannot be added or removed at runtime, but existing
+remotes configured as above will be dynamically detected at runtime and added or
+removed as appropriate.
+
+The following interfaces can be implemented remotely. Others will be added in
+the future.
+
+- BatteryChargeLimit1
+- FactoryReset1
+- FanControl1
+- GpuPerformanceLevel1
+- GpuPowerProfile1
+- PerformanceProfile1

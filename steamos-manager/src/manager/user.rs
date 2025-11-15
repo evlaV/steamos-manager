@@ -2948,7 +2948,7 @@ mod test {
             .request_name("com.steampowered.TestDaemon")
             .await
             .unwrap();
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(2)).await;
 
         assert!(
             !test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)
@@ -2986,7 +2986,7 @@ mod test {
         );
 
         test.setup.remotes.clear();
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(2)).await;
 
         assert!(
             test_remote_interface_missing::<BatteryChargeLimit1, _>(&proxy, &test)

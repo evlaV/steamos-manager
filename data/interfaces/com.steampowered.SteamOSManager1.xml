@@ -362,7 +362,8 @@
       Remote interfaces are implementations of specific interfaces that SteamOS
       Manager defines but are implemented in other processes. SteamOS Manager
       will relay bus communications to those remote processes so there can
-      still be a central bus name for them.
+      still be a central bus name for them. See the "Interoperability" section
+      in the README for more information.
   -->
   <interface name="com.steampowered.SteamOSManager1.RemoteInterface1">
 
