@@ -8,8 +8,13 @@ test:
   tags:
     - x86_64-linux-kvm-docker
   script:
-    - pacman -Sy --noconfirm --needed dbus rust gsettings-desktop-schemas clang speech-dispatcher
-    - dbus-run-session cargo test
+    - pacman -Sy --noconfirm --needed dbus rust gsettings-desktop-schemas clang speech-dispatcher cargo-tarpaulin
+    - dbus-run-session cargo tarpaulin --out xml --engine llvm
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cobertura.xml
 
 workflow:
   rules:
