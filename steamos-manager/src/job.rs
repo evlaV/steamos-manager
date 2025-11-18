@@ -466,7 +466,7 @@ pub(crate) mod test {
     async fn test_multikill() {
         let _h = testing::start();
 
-        let mut sleep_process = Job::spawn("/usr/bin/sleep", &["0.1"]).await.unwrap();
+        let mut sleep_process = Job::spawn("/usr/bin/sleep", &["0.2"]).await.unwrap();
         sleep_process.cancel(true).await.expect("kill");
 
         // Killing a process should be idempotent
