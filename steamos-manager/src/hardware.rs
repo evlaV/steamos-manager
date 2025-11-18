@@ -247,7 +247,7 @@ pub(crate) async fn device_config() -> Result<&'static Option<DeviceConfig>> {
 #[cfg(test)]
 pub(crate) async fn device_config() -> Result<Option<DeviceConfig>> {
     let test = crate::testing::current();
-    let config = test.device_config.borrow().clone();
+    let config = (*test.device_config.lock().await).clone();
     Ok(config)
 }
 
@@ -373,9 +373,9 @@ pub mod test {
                 write(path(PRODUCT_NAME_PATH), "Galileo\n").await?;
             }
         }
-        testing::current()
-            .device_config
-            .replace(DeviceConfig::load().await?);
+        if let Some(config) = DeviceConfig::load().await? {
+            testing::current().set_device_config(config).await;
+        }
         Ok(())
     }
 
@@ -390,7 +390,9 @@ pub mod test {
         write(path(SYS_VENDOR_PATH), sys_vendor).await?;
         write(path(BOARD_NAME_PATH), board_name).await?;
         write(path(PRODUCT_NAME_PATH), product_name).await?;
-        h.test.device_config.replace(DeviceConfig::load().await?);
+        if let Some(config) = DeviceConfig::load().await? {
+            h.test.set_device_config(config).await;
+        }
         Ok(h)
     }
 
@@ -798,7 +800,7 @@ pub mod test {
         platform_config.fan_control = Some(ServiceConfig::Systemd(String::from(
             "jupiter-fan-control.service",
         )));
-        h.test.platform_config.replace(Some(platform_config));
+        h.test.set_platform_config(platform_config).await;
 
         let fan_control = FanControl::new(connection);
         assert_eq!(
