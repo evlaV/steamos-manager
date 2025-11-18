@@ -1,5 +1,6 @@
 stages:
   - test
+  - deploy
 
 image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/archlinux:base-devel
 
@@ -49,3 +50,15 @@ proxy:
     - git status
     - git diff
     - git diff-index --quiet HEAD
+
+build:
+  stage: deploy
+  tags:
+    - x86_64-linux-kvm-docker
+  script:
+    - pacman -Sy --noconfirm --needed dbus rust gsettings-desktop-schemas clang speech-dispatcher
+    - make install DESTDIR=build
+    - tar --zstd -C build -cvf build.tar.zst .
+  artifacts:
+    paths:
+      - build.tar.zst
