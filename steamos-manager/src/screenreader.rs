@@ -641,7 +641,7 @@ impl<'dbus> OrcaManager<'dbus> {
         self.orca_unit.restart().await
     }
 
-    async fn stop_orca(&self) -> Result<()> {
+    pub async fn stop_orca(&self) -> Result<()> {
         trace!("Stopping orca...");
         self.orca_unit.stop().await
     }

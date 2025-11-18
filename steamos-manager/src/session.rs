@@ -17,13 +17,16 @@ use strum::{Display, EnumString};
 use tokio::fs::create_dir_all;
 use tokio::fs::{read_dir, remove_file, try_exists, write};
 use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot};
+use tokio_stream::StreamExt;
+use tracing::debug;
+use zbus::proxy::PropertyChanged;
 use zbus::{fdo, Connection};
 
 use crate::daemon::user::{Command as DaemonCommand, UserCommand};
 use crate::manager::root::RootManagerProxy;
-use crate::path;
-use crate::systemd::SystemdUnit;
+use crate::systemd::{ActiveState, SystemdUnit};
+use crate::{path, Service};
 
 const CONFIG_PREFIX: &str = "/etc/sddm.conf.d";
 const SESSION_CHECK_PATH: &str = "steamos.conf";
@@ -74,6 +77,17 @@ pub(crate) struct SessionManager {
     connection: Connection,
     manager: RootManagerProxy<'static>,
     channel: Sender<DaemonCommand>,
+}
+
+pub(crate) struct SessionManagerService {
+    session: Connection,
+    current_mode: LoginMode,
+    channel: broadcast::Sender<SessionManagerMessage>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum SessionManagerMessage {
+    LoginModeChanged(LoginMode),
 }
 
 pub(crate) async fn is_session_managed() -> Result<bool> {
@@ -142,6 +156,21 @@ impl SessionManager {
             connection,
             channel,
         })
+    }
+
+    pub(crate) async fn create_service(
+        &self,
+    ) -> Result<(
+        SessionManagerService,
+        broadcast::Receiver<SessionManagerMessage>,
+    )> {
+        let (tx, rx) = broadcast::channel(5);
+        let service = SessionManagerService {
+            channel: tx,
+            current_mode: self.current_login_mode().await?,
+            session: self.connection.clone(),
+        };
+        Ok((service, rx))
     }
 
     async fn unit_is_active(&self, unit: &str) -> Result<bool> {
@@ -284,6 +313,74 @@ pub(crate) mod root {
             format!("[Autologin]\nSession={session}\n").as_bytes(),
         )
         .await?)
+    }
+}
+
+impl SessionManagerService {
+    async fn active_state_adapter(
+        prop_changed: PropertyChanged<'_, String>,
+    ) -> Result<ActiveState> {
+        let prop = prop_changed.get().await?;
+        Ok(ActiveState::try_from(prop.as_str())?)
+    }
+}
+
+impl Service for SessionManagerService {
+    const NAME: &'static str = "session-manager";
+
+    async fn run(&mut self) -> Result<()> {
+        let unit = SystemdUnit::new(self.session.clone(), "gamescope-session.service").await?;
+
+        let stream = unit
+            .proxy
+            .receive_active_state_changed()
+            .await
+            .then(SessionManagerService::active_state_adapter);
+
+        tokio::pin!(stream);
+
+        if unit.active().await.unwrap_or(ActiveState::Failed) == ActiveState::Active {
+            self.current_mode = LoginMode::Game;
+        } else {
+            self.current_mode = LoginMode::Desktop;
+        }
+        let _ = self
+            .channel
+            .send(SessionManagerMessage::LoginModeChanged(self.current_mode));
+
+        loop {
+            let Some(state) = stream.next().await else {
+                return Ok(());
+            };
+
+            let Ok(state) = state else {
+                continue;
+            };
+
+            debug!("Game mode changed to {state}");
+
+            match state {
+                ActiveState::Active => {
+                    if self.current_mode == LoginMode::Game {
+                        continue;
+                    }
+                    self.current_mode = LoginMode::Game;
+                    let _ = self
+                        .channel
+                        .send(SessionManagerMessage::LoginModeChanged(LoginMode::Game));
+                }
+                ActiveState::Inactive | ActiveState::Deactivating | ActiveState::Failed => {
+                    if self.current_mode == LoginMode::Desktop {
+                        continue;
+                    }
+                    self.current_mode = LoginMode::Desktop;
+                    let _ = self
+                        .channel
+                        .send(SessionManagerMessage::LoginModeChanged(LoginMode::Desktop));
+                }
+                _ => (),
+            }
+        }
     }
 }
 
