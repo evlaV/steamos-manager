@@ -12,7 +12,7 @@ use std::fmt;
 use std::str::FromStr;
 use zbus::Connection;
 
-use crate::systemd::{daemon_reload, EnableState, SystemdUnit};
+use crate::systemd::{daemon_reload, EnableState, JobMode, SystemdUnit};
 
 #[derive(PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[repr(u32)]
@@ -90,24 +90,24 @@ impl<'dbus> HdmiCecControl<'dbus> {
         match state {
             HdmiCecState::Disabled => {
                 self.plasma_rc_unit.mask().await?;
-                self.plasma_rc_unit.stop().await?;
+                self.plasma_rc_unit.stop(JobMode::Fail).await?;
                 self.wakehook_unit.mask().await?;
-                self.wakehook_unit.stop().await?;
+                self.wakehook_unit.stop(JobMode::Fail).await?;
                 daemon_reload(&self.connection).await?;
             }
             HdmiCecState::ControlOnly => {
                 self.wakehook_unit.mask().await?;
-                self.wakehook_unit.stop().await?;
+                self.wakehook_unit.stop(JobMode::Fail).await?;
                 self.plasma_rc_unit.unmask().await?;
                 daemon_reload(&self.connection).await?;
-                self.plasma_rc_unit.start().await?;
+                self.plasma_rc_unit.start(JobMode::Fail).await?;
             }
             HdmiCecState::ControlAndWake => {
                 self.plasma_rc_unit.unmask().await?;
                 self.wakehook_unit.unmask().await?;
                 daemon_reload(&self.connection).await?;
-                self.plasma_rc_unit.start().await?;
-                self.wakehook_unit.start().await?;
+                self.plasma_rc_unit.start(JobMode::Fail).await?;
+                self.wakehook_unit.start(JobMode::Fail).await?;
             }
         }
 

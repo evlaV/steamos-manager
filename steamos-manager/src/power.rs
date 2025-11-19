@@ -30,7 +30,7 @@ use crate::gpu::AMDGPU_HWMON_NAME;
 use crate::hardware::device_config;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::{TdpLimit1, MANAGER_PATH};
-use crate::systemd::{EnableState, SystemdUnit};
+use crate::systemd::{EnableState, JobMode, SystemdUnit};
 use crate::Service;
 use crate::{path, write_synced};
 
@@ -378,14 +378,14 @@ impl<'dbus> CpuSchedulerManager<'dbus> {
             CpuScheduler::None => {
                 // Stop the scx service if it's installed
                 if let Some(unit) = &self.scx_unit {
-                    unit.stop().await?;
+                    unit.stop(JobMode::Fail).await?;
                 }
                 self.current = CpuScheduler::None;
             }
             CpuScheduler::LAVD => {
                 // Start the scx service if it's installed
                 if let Some(unit) = &self.scx_unit {
-                    unit.start().await?;
+                    unit.start(JobMode::Fail).await?;
                     self.current = CpuScheduler::LAVD;
                 } else {
                     // service not present; remain at None

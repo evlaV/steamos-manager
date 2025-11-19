@@ -98,6 +98,16 @@ pub enum EnableState {
     Static,
 }
 
+#[derive(Display, EnumString, PartialEq, Debug, Copy, Clone)]
+#[strum(serialize_all = "kebab-case")]
+pub enum JobMode {
+    Replace,
+    Fail,
+    Isolate,
+    IgnoreDependencies,
+    IgnoreRequirements,
+}
+
 pub struct SystemdUnit<'dbus> {
     connection: Connection,
     pub(crate) proxy: SystemdUnitProxy<'dbus>,
@@ -140,18 +150,18 @@ impl<'dbus> SystemdUnit<'dbus> {
         })
     }
 
-    pub async fn restart(&self) -> Result<()> {
-        self.proxy.restart("fail").await?;
+    pub async fn restart(&self, job_mode: JobMode) -> Result<()> {
+        self.proxy.restart(job_mode.to_string().as_str()).await?;
         Ok(())
     }
 
-    pub async fn start(&self) -> Result<()> {
-        self.proxy.start("fail").await?;
+    pub async fn start(&self, job_mode: JobMode) -> Result<()> {
+        self.proxy.start(job_mode.to_string().as_str()).await?;
         Ok(())
     }
 
-    pub async fn stop(&self) -> Result<()> {
-        self.proxy.stop("fail").await?;
+    pub async fn stop(&self, job_mode: JobMode) -> Result<()> {
+        self.proxy.stop(job_mode.to_string().as_str()).await?;
         Ok(())
     }
 
@@ -239,6 +249,18 @@ pub mod test {
     }
 
     #[test]
+    fn job_mode_roundtrip() {
+        enum_roundtrip!(JobMode {
+            "replace": str = Replace,
+            "fail": str = Fail,
+            "isolate": str = Isolate,
+            "ignore-dependencies": str = IgnoreDependencies,
+            "ignore-requirements": str = IgnoreRequirements,
+        });
+        assert!(JobMode::from_str("failed").is_err());
+    }
+
+    #[test]
     fn test_escape() {
         assert_eq!(escape("systemd"), "systemd");
         assert_eq!(escape("system d"), "system_20d");
@@ -273,7 +295,7 @@ pub mod test {
             mode: &str,
             #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
         ) -> fdo::Result<OwnedObjectPath> {
-            if mode != "fail" {
+            if JobMode::from_str(mode).is_err() {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
             let path = ObjectPath::try_from(format!("/restart/{mode}/{}", self.job))
@@ -289,7 +311,7 @@ pub mod test {
             mode: &str,
             #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
         ) -> fdo::Result<OwnedObjectPath> {
-            if mode != "fail" {
+            if JobMode::from_str(mode).is_err() {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
             let path = ObjectPath::try_from(format!("/start/{mode}/{}", self.job))
@@ -305,7 +327,7 @@ pub mod test {
             mode: &str,
             #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
         ) -> fdo::Result<OwnedObjectPath> {
-            if mode != "fail" {
+            if JobMode::from_str(mode).is_err() {
                 return Err(to_zbus_fdo_error("Invalid mode"));
             }
             let path = ObjectPath::try_from(format!("/stop/{mode}/{}", self.job))
@@ -466,15 +488,15 @@ pub mod test {
             .expect("unit");
         assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
 
-        assert!(unit.start().await.is_ok());
+        assert!(unit.start(JobMode::Fail).await.is_ok());
         assert_eq!(mock_unit.get().await.active, "active");
         assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
-        assert!(unit.restart().await.is_ok());
+        assert!(unit.restart(JobMode::Fail).await.is_ok());
         assert_eq!(mock_unit.get().await.active, "active");
         assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
-        assert!(unit.stop().await.is_ok());
+        assert!(unit.stop(JobMode::Fail).await.is_ok());
         assert_eq!(mock_unit.get().await.active, "inactive");
         assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
 

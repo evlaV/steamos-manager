@@ -26,7 +26,7 @@ use udev::{Event, EventType};
 use zbus::Connection;
 
 use crate::process::{run_script, script_output};
-use crate::systemd::{daemon_reload, SystemdUnit};
+use crate::systemd::{daemon_reload, JobMode, SystemdUnit};
 use crate::udev::single_poll;
 use crate::{path, read_config_directory};
 
@@ -118,7 +118,7 @@ async fn restart_iwd(connection: Connection) -> Result<()> {
 
     // worked, now restart iwd
     let unit = SystemdUnit::new(connection, "iwd.service").await?;
-    unit.restart()
+    unit.restart(JobMode::Fail)
         .await
         .inspect_err(|message| error!("restart_iwd: restart unit got an error: {message}"))
 }
