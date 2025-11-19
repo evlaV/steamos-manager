@@ -28,6 +28,27 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.Audio2
+      @short_description: Optional interface to manipulate audio properties.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.Audio2">
+    <!--
+        AvailableModes:
+
+        Enumerate the supported audio modes on the system.  
+    -->
+    <property name="AvailableModes" type="as" access="read"/>
+
+    <!--
+        Mode:
+
+        The audio mode. Get valid values from AvailableModes.
+    -->
+    <property name="Mode" type="s" access="readwrite"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.AmbientLightSensor1
       @short_description: Optional interface to interact with the built-in
       ambient light sensor.
