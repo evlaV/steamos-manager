@@ -677,6 +677,21 @@ pub mod test {
     }
 
     #[tokio::test]
+    async fn board_lookup_steam_machine_fremont() {
+        let _h = setup_board("Valve\n", "Fremont\n", "Fremont\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("steam_machine"), String::from("Fremont"))
+        );
+    }
+
+    #[tokio::test]
     async fn board_lookup_invalid_valve() {
         let _h = setup_board("Valve\n", "Neptune\n", "Neptune\n")
             .await

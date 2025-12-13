@@ -1,0 +1,5 @@
+[[device]]
+dmi.sys_vendor = "Valve"
+dmi.board_name = "Fremont"
+device = "steam_machine"
+variant = "Fremont"
