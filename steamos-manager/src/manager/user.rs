@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs::try_exists;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
-use tokio::sync::{broadcast, oneshot, Mutex};
-use tokio::task::{spawn, JoinHandle};
+use tokio::sync::{Mutex, broadcast, oneshot};
+use tokio::task::{JoinHandle, spawn};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 use zbus::fdo::{self, DBusProxy};
@@ -22,30 +22,30 @@ use zbus::names::{BusName, UniqueName};
 use zbus::object_server::{Interface, SignalEmitter};
 use zbus::proxy::{Builder, CacheProperties};
 use zbus::zvariant::{Fd, ObjectPath};
-use zbus::{interface, zvariant, Connection, ObjectServer, Proxy};
+use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 
-use steamos_manager_macros::{remote, RemoteManager};
+use steamos_manager_macros::{RemoteManager, remote};
 
 use crate::audio::{AudioManager, Mode};
 use crate::cec::{HdmiCecControl, HdmiCecState};
-use crate::daemon::user::Command;
 use crate::daemon::DaemonCommand;
+use crate::daemon::user::Command;
 use crate::error::{to_zbus_error, to_zbus_fdo_error, zbus_to_zbus_fdo};
 use crate::gpu::{
-    gpu_performance_level_driver, gpu_power_profile_driver, GpuPerformanceLevelDriver,
-    GpuPowerProfileDriver,
+    GpuPerformanceLevelDriver, GpuPowerProfileDriver, gpu_performance_level_driver,
+    gpu_power_profile_driver,
 };
 use crate::hardware::{
-    device_config, device_type, device_variant, steam_deck_variant, SteamDeckVariant,
+    SteamDeckVariant, device_config, device_type, device_variant, steam_deck_variant,
 };
 use crate::job::JobManagerCommand;
 use crate::manager::{RemoteInterface, RemoteInterfaceConfig, RemoteOwner};
 use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
-    get_available_cpu_scaling_governors, get_available_platform_profiles, get_cpu_boost_state,
-    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, CpuSchedulerManager,
-    TdpManagerCommand,
+    CpuSchedulerManager, TdpManagerCommand, get_available_cpu_scaling_governors,
+    get_available_platform_profiles, get_cpu_boost_state, get_cpu_scaling_governor,
+    get_max_charge_level, get_platform_profile,
 };
 use crate::proxy::{
     BatteryChargeLimit1Proxy, FactoryReset1Proxy, FanControl1Proxy, GpuPerformanceLevel1Proxy,
@@ -53,13 +53,13 @@ use crate::proxy::{
 };
 use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
 use crate::session::{
-    is_session_managed, valid_desktop_sessions, LoginMode, SessionManager, SessionManagerMessage,
-    SessionManagerService,
+    LoginMode, SessionManager, SessionManagerMessage, SessionManagerService, is_session_managed,
+    valid_desktop_sessions,
 };
 use crate::wifi::{
-    get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces, WifiBackend,
+    WifiBackend, get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces,
 };
-use crate::{SerialOrderValidator, Service, API_VERSION};
+use crate::{API_VERSION, SerialOrderValidator, Service};
 
 pub(crate) const MANAGER_PATH: &str = "/com/steampowered/SteamOSManager1";
 
@@ -381,11 +381,7 @@ impl BatteryChargeLimit1 {
     #[zbus(property)]
     async fn max_charge_level(&self) -> fdo::Result<i32> {
         let level = get_max_charge_level().await.map_err(to_zbus_fdo_error)?;
-        if level <= 0 {
-            Ok(-1)
-        } else {
-            Ok(level)
-        }
+        if level <= 0 { Ok(-1) } else { Ok(level) }
     }
 
     #[zbus(property)]
@@ -1885,7 +1881,7 @@ mod test {
     };
     use crate::power::TdpLimitingMethod;
     use crate::proxy::RemoteInterface1Proxy;
-    use crate::session::{make_managed, SessionManagerState};
+    use crate::session::{SessionManagerState, make_managed};
     use crate::systemd::test::{MockManager, MockUnit};
     use crate::{path, testing};
 
@@ -1896,7 +1892,7 @@ mod test {
     use std::path::PathBuf;
     use std::time::Duration;
     use tokio::fs::{create_dir_all, set_permissions, write};
-    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+    use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
     use tokio::time::sleep;
     use zbus::object_server::Interface;
 
@@ -2169,27 +2165,33 @@ mod test {
     async fn interface_matches_cpu_boost1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<CpuBoost1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<CpuBoost1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn interface_matches_cpu_scaling1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<CpuScaling1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<CpuScaling1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn interface_matches_factory_reset1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<FactoryReset1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<FactoryReset1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2259,9 +2261,11 @@ mod test {
     async fn interface_matches_fan_control1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<FanControl1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<FanControl1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2286,9 +2290,11 @@ mod test {
     async fn interface_matches_gpu_power_profile1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<GpuPowerProfile1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<GpuPowerProfile1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2303,9 +2309,11 @@ mod test {
         reply.send(Ok(true)).unwrap();
         sleep(Duration::from_millis(1)).await;
 
-        assert!(test_interface_matches::<TdpLimit1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<TdpLimit1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2334,18 +2342,22 @@ mod test {
     async fn interface_matches_hdmi_cec1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<HdmiCec1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<HdmiCec1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn interface_matches_low_power_mode1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<LowPowerMode1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<LowPowerMode1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2359,9 +2371,11 @@ mod test {
     async fn interface_matches_manager2() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<Manager2>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<Manager2>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2397,18 +2411,22 @@ mod test {
     async fn interface_matches_remote_interface1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<RemoteInterface1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<RemoteInterface1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn interface_matches_storage1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<Storage1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<Storage1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2457,9 +2475,11 @@ mod test {
     async fn interface_matches_update_bios1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<UpdateBios1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<UpdateBios1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2491,9 +2511,11 @@ mod test {
     async fn interface_matches_update_dock1() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<UpdateDock1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<UpdateDock1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2536,18 +2558,22 @@ mod test {
     async fn interface_matches_wifi_debug() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<WifiDebug1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<WifiDebug1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn interface_matches_wifi_debug_dump() {
         let test = start(TestConfig::all()).await.expect("start");
 
-        assert!(test_interface_matches::<WifiDebugDump1>(&test.connection)
-            .await
-            .unwrap());
+        assert!(
+            test_interface_matches::<WifiDebugDump1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     async fn register_remote<I: RemoteInterface + Interface>(

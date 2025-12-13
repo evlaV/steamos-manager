@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use tokio::fs::File;
@@ -17,34 +17,34 @@ use tracing::{debug, error, info};
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{self, Fd};
-use zbus::{fdo, interface, proxy, Connection};
+use zbus::{Connection, fdo, interface, proxy};
 
-use crate::daemon::root::{Command, RootCommand};
 use crate::daemon::DaemonCommand;
+use crate::daemon::root::{Command, RootCommand};
 use crate::error::{to_zbus_error, to_zbus_fdo_error};
 use crate::gpu::{
-    gpu_performance_level_driver, gpu_power_profile_driver, GpuPerformanceLevelDriver,
-    GpuPowerProfileDriver,
+    GpuPerformanceLevelDriver, GpuPowerProfileDriver, gpu_performance_level_driver,
+    gpu_power_profile_driver,
 };
 use crate::hardware::{
-    device_config, steam_deck_variant, FactoryResetKind, FanControl, FanControlState,
-    SteamDeckVariant,
+    FactoryResetKind, FanControl, FanControlState, SteamDeckVariant, device_config,
+    steam_deck_variant,
 };
 use crate::job::JobManager;
 use crate::platform::platform_config;
 use crate::power::{
+    CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, TdpLimitManager,
     set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
-    tdp_limit_manager, CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager,
-    TdpLimitManager,
+    tdp_limit_manager,
 };
 use crate::process::{run_script, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
 use crate::sysfs::SysfsWritten;
 use crate::wifi::{
-    extract_wifi_trace, generate_wifi_dump, set_wifi_backend, set_wifi_debug_mode,
-    set_wifi_power_management_state, WifiBackend, WifiDebugMode, WifiPowerManagement,
+    WifiBackend, WifiDebugMode, WifiPowerManagement, extract_wifi_trace, generate_wifi_dump,
+    set_wifi_backend, set_wifi_debug_mode, set_wifi_power_management_state,
 };
-use crate::{path, SerialOrderValidator, API_VERSION};
+use crate::{API_VERSION, SerialOrderValidator, path};
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 #[repr(u32)]
@@ -206,10 +206,12 @@ impl SteamOSManager {
             SteamDeckVariant::Jupiter => 1,
             SteamDeckVariant::Galileo => index,
             SteamDeckVariant::Unknown => {
-                return Err(fdo::Error::Failed(String::from("Unknown model")))
+                return Err(fdo::Error::Failed(String::from("Unknown model")));
             }
         };
-        let als_path = path(format!("/sys/devices/platform/AMDI0010:00/i2c-0/i2c-PRP0001:0{i0}/iio:device{index}/in_illuminance_integration_time"));
+        let als_path = path(format!(
+            "/sys/devices/platform/AMDI0010:00/i2c-0/i2c-PRP0001:0{i0}/iio:device{index}/in_illuminance_integration_time"
+        ));
         let result = File::create(als_path).await;
 
         match result {

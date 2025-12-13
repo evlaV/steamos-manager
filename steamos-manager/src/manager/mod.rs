@@ -9,7 +9,7 @@ use serde::Deserialize;
 use zbus::names::{BusName, OwnedWellKnownName};
 use zbus::object_server::Interface;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
-use zbus::{fdo, Connection};
+use zbus::{Connection, fdo};
 
 pub(crate) mod root;
 pub(crate) mod user;

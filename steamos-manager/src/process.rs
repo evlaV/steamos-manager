@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::ffi::OsStr;
 
 #[cfg(not(test))]

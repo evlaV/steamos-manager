@@ -5,18 +5,18 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use num_enum::TryFromPrimitive;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::num::NonZeroU32;
 use std::ops::RangeInclusive;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use strum::{Display, EnumIter, EnumString, VariantNames};
-use tokio::fs::{self, try_exists, File};
+use tokio::fs::{self, File, try_exists};
 use tokio::io::{AsyncWriteExt, Interest};
 use tokio::net::unix::pipe;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -25,13 +25,13 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 use zbus::Connection;
 
+use crate::Service;
 use crate::gpu::AMDGPU_HWMON_NAME;
 use crate::hardware::device_config;
 use crate::manager::root::RootManagerProxy;
-use crate::manager::user::{TdpLimit1, MANAGER_PATH};
-use crate::sysfs::{find_sysdir, sysfs_queued_write, SysfsWritten};
+use crate::manager::user::{MANAGER_PATH, TdpLimit1};
+use crate::sysfs::{SysfsWritten, find_sysdir, sysfs_queued_write};
 use crate::systemd::{EnableState, JobMode, SystemdUnit};
-use crate::Service;
 use crate::{path, write_synced};
 
 #[cfg(not(test))]
@@ -804,7 +804,7 @@ pub(crate) mod test {
     use anyhow::anyhow;
     use std::time::Duration;
     use tokio::fs::{create_dir_all, read_to_string, remove_dir, write};
-    use tokio::sync::mpsc::{channel, unbounded_channel, Sender};
+    use tokio::sync::mpsc::{Sender, channel, unbounded_channel};
     use tokio::time::sleep;
     use zbus::{fdo, interface};
 
@@ -1172,22 +1172,28 @@ pub(crate) mod test {
     async fn read_available_performance_profiles() {
         let _h = testing::start();
 
-        assert!(get_available_platform_profiles("power-driver")
-            .await
-            .is_err());
+        assert!(
+            get_available_platform_profiles("power-driver")
+                .await
+                .is_err()
+        );
 
         let base = path(PLATFORM_PROFILE_PREFIX).join("platform-profile0");
         create_dir_all(&base).await.unwrap();
-        assert!(get_available_platform_profiles("power-driver")
-            .await
-            .is_err());
+        assert!(
+            get_available_platform_profiles("power-driver")
+                .await
+                .is_err()
+        );
 
         write_synced(base.join("name"), b"power-driver\n")
             .await
             .unwrap();
-        assert!(get_available_platform_profiles("power-driver")
-            .await
-            .is_err());
+        assert!(
+            get_available_platform_profiles("power-driver")
+                .await
+                .is_err()
+        );
 
         write_synced(base.join("choices"), b"a b c\n")
             .await

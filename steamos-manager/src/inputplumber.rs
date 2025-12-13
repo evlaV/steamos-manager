@@ -9,14 +9,14 @@ use anyhow::Result;
 use tokio::spawn;
 use tokio_stream::StreamExt;
 use tracing::{debug, info};
+use zbus::Connection;
 use zbus::fdo::{InterfacesAdded, ObjectManagerProxy};
 use zbus::names::OwnedInterfaceName;
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::ObjectPath;
-use zbus::Connection;
 
-use crate::hardware::{device_config, InputPlumberTargetDevice};
 use crate::Service;
+use crate::hardware::{InputPlumberTargetDevice, device_config};
 
 #[zbus::proxy(
     interface = "org.shadowblip.Input.CompositeDevice",

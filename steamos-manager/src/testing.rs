@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use libc::pid_t;
 use nix::sys::signal;
 use nix::unistd::Pid;
@@ -11,7 +11,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::{self, Arc, Once};
 use std::time::Duration;
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 use tokio::fs::read;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -19,11 +19,11 @@ use tokio::sync::Mutex;
 use tracing::error;
 use tracing::subscriber::set_global_default;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{fmt, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, fmt};
+use zbus::Address;
 use zbus::connection::{Builder, Connection};
 use zbus::object_server::Interface;
 use zbus::zvariant::ObjectPath;
-use zbus::Address;
 use zbus_xml::{Method, Node, Property, Signal};
 
 use crate::hardware::DeviceConfig;

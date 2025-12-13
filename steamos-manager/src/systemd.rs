@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum::{Display, EnumString};
@@ -235,7 +235,7 @@ pub mod test {
     use tokio::time::sleep;
     use zbus::object_server::SignalEmitter;
     use zbus::zvariant::ObjectPath;
-    use zbus::{fdo, ObjectServer};
+    use zbus::{ObjectServer, fdo};
 
     #[test]
     fn enable_state_roundtrip() {

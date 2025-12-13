@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc::Sender;
@@ -14,10 +14,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::subscriber::set_global_default;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{fmt, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, fmt};
 use zbus::connection::{Builder, Connection};
 
-use crate::daemon::{channel, Daemon, DaemonCommand, DaemonContext};
+use crate::daemon::{Daemon, DaemonCommand, DaemonContext, channel};
 use crate::ds_inhibit::Inhibitor;
 use crate::inputplumber::DeckService;
 use crate::manager::root::SteamOSManager;

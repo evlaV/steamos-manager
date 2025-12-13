@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use num_enum::TryFromPrimitive;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -22,7 +22,7 @@ use zbus::Connection;
 
 use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
 use crate::path;
-use crate::platform::{platform_config, ServiceConfig};
+use crate::platform::{ServiceConfig, platform_config};
 use crate::power::TdpLimitingMethod;
 use crate::process::{run_script, script_exit_code};
 use crate::systemd::{JobMode, SystemdUnit};

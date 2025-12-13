@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use num_enum::TryFromPrimitive;
 use regex::Regex;
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::LazyLock;
 use strum::{Display, EnumString, VariantNames};
-use tokio::fs::{self, try_exists, File};
+use tokio::fs::{self, File, try_exists};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error};
 
@@ -272,8 +272,7 @@ impl GpuPowerProfileDriver for AmdgpuPowerProfileDriver {
 
     async fn set_power_profile(&self, value: GpuPowerProfile) -> Result<()> {
         #[allow(irrefutable_let_patterns)] // Remove when more values are added
-        let GpuPowerProfile::Amdgpu(value) = value
-        else {
+        let GpuPowerProfile::Amdgpu(value) = value else {
             bail!("This is not an amdgpu-compatible profile");
         };
         let profile = (value as u32).to_string();
@@ -321,8 +320,7 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
 
     async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
         #[allow(irrefutable_let_patterns)] // Remove when more values are added
-        let GpuPerformanceLevel::Amdgpu(level) = level
-        else {
+        let GpuPerformanceLevel::Amdgpu(level) = level else {
             bail!("This is not an amdgpu-compatible performance level");
         };
         let level: String = level.to_string();
@@ -597,8 +595,8 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::hardware::test::fake_model;
     use crate::hardware::SteamDeckVariant;
+    use crate::hardware::test::fake_model;
     use crate::power::HWMON_PREFIX;
     use crate::{enum_roundtrip, path, testing};
     use tokio::fs::{create_dir_all, read_to_string, write};

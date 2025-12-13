@@ -8,13 +8,13 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::{Group, Literal, TokenStream as TokenStream2, TokenTree};
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use std::collections::HashMap;
 use syn::parse::{self, Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
-    self, parse_macro_input, Attribute, Error, Fields, FnArg, GenericArgument, Ident, ImplItem,
-    ItemImpl, ItemStruct, Meta, PathArguments, ReturnType, Type, TypePath,
+    self, Attribute, Error, Fields, FnArg, GenericArgument, Ident, ImplItem, ItemImpl, ItemStruct,
+    Meta, PathArguments, ReturnType, Type, TypePath, parse_macro_input,
 };
 
 #[derive(Debug)]

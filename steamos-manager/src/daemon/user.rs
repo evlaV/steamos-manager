@@ -7,23 +7,23 @@
 
 #[cfg(not(test))]
 use anyhow::anyhow;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::sync::mpsc::{unbounded_channel, Sender};
+use tokio::sync::mpsc::{Sender, unbounded_channel};
 use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tracing::subscriber::set_global_default;
 use tracing::{error, info};
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{fmt, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, fmt};
 #[cfg(not(test))]
 use xdg::BaseDirectories;
 use zbus::connection::{Builder, Connection};
 use zbus::fdo::PeerProxy;
 
-use crate::daemon::{channel, Daemon, DaemonCommand, DaemonContext};
+use crate::daemon::{Daemon, DaemonCommand, DaemonContext, channel};
 use crate::job::{JobManager, JobManagerService};
 use crate::manager::user::create_interfaces;
 use crate::path;

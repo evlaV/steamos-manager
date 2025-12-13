@@ -9,7 +9,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use nix::errno::Errno;
-use nix::unistd::{access, AccessFlags};
+use nix::unistd::{AccessFlags, access};
 use serde::Deserialize;
 use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
@@ -49,7 +49,7 @@ impl ScriptConfig {
         let meta = match metadata(&self.script).await {
             Ok(meta) => meta,
             Err(e) if [ErrorKind::NotFound, ErrorKind::PermissionDenied].contains(&e.kind()) => {
-                return Ok(false)
+                return Ok(false);
             }
             Err(e) => return Err(e.into()),
         };
@@ -146,7 +146,7 @@ impl FormatDeviceConfig {
         let meta = match metadata(&self.script).await {
             Ok(meta) => meta,
             Err(e) if [ErrorKind::NotFound, ErrorKind::PermissionDenied].contains(&e.kind()) => {
-                return Ok(false)
+                return Ok(false);
             }
             Err(e) => return Err(e.into()),
         };
@@ -246,24 +246,28 @@ mod test {
 
     #[tokio::test]
     async fn script_config_valid_directory() {
-        assert!(!ScriptConfig {
-            script: PathBuf::from("/"),
-            script_args: Vec::new(),
-        }
-        .is_valid(false)
-        .await
-        .unwrap());
+        assert!(
+            !ScriptConfig {
+                script: PathBuf::from("/"),
+                script_args: Vec::new(),
+            }
+            .is_valid(false)
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn script_config_valid_root_directory() {
-        assert!(!ScriptConfig {
-            script: PathBuf::from("/"),
-            script_args: Vec::new(),
-        }
-        .is_valid(true)
-        .await
-        .unwrap());
+        assert!(
+            !ScriptConfig {
+                script: PathBuf::from("/"),
+                script_args: Vec::new(),
+            }
+            .is_valid(true)
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -275,13 +279,15 @@ mod test {
             .await
             .unwrap();
 
-        assert!(!ScriptConfig {
-            script: exe_path,
-            script_args: Vec::new(),
-        }
-        .is_valid(false)
-        .await
-        .unwrap());
+        assert!(
+            !ScriptConfig {
+                script: exe_path,
+                script_args: Vec::new(),
+            }
+            .is_valid(false)
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -293,13 +299,15 @@ mod test {
             .await
             .unwrap();
 
-        assert!(!ScriptConfig {
-            script: exe_path,
-            script_args: Vec::new(),
-        }
-        .is_valid(true)
-        .await
-        .unwrap());
+        assert!(
+            !ScriptConfig {
+                script: exe_path,
+                script_args: Vec::new(),
+            }
+            .is_valid(true)
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -311,13 +319,15 @@ mod test {
             .await
             .unwrap();
 
-        assert!(ScriptConfig {
-            script: exe_path,
-            script_args: Vec::new(),
-        }
-        .is_valid(false)
-        .await
-        .unwrap());
+        assert!(
+            ScriptConfig {
+                script: exe_path,
+                script_args: Vec::new(),
+            }
+            .is_valid(false)
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -329,13 +339,15 @@ mod test {
             .await
             .unwrap();
 
-        assert!(ScriptConfig {
-            script: exe_path,
-            script_args: Vec::new(),
-        }
-        .is_valid(true)
-        .await
-        .unwrap());
+        assert!(
+            ScriptConfig {
+                script: exe_path,
+                script_args: Vec::new(),
+            }
+            .is_valid(true)
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]

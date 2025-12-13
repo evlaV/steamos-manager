@@ -5,20 +5,20 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{Result, anyhow, bail, ensure};
 use std::os::fd::AsFd;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
+use tokio::io::unix::AsyncFd;
 use tokio::select;
-use tokio::sync::mpsc::{channel, unbounded_channel, Receiver, Sender, UnboundedSender};
-use tokio::task::{spawn, JoinHandle};
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender, channel, unbounded_channel};
+use tokio::task::{JoinHandle, spawn};
 use tokio::time::sleep;
 use tracing::debug;
 use udev::{Event, EventType, MonitorBuilder};
 use zbus::object_server::{InterfaceRef, SignalEmitter};
-use zbus::{self, interface, Connection};
+use zbus::{self, Connection, interface};
 
 use crate::Service;
 

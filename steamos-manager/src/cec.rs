@@ -6,13 +6,13 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{bail, Error, Result};
+use anyhow::{Error, Result, bail};
 use num_enum::TryFromPrimitive;
 use std::fmt;
 use std::str::FromStr;
 use zbus::Connection;
 
-use crate::systemd::{daemon_reload, EnableState, JobMode, SystemdUnit};
+use crate::systemd::{EnableState, JobMode, SystemdUnit, daemon_reload};
 
 #[derive(PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[repr(u32)]

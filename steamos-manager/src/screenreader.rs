@@ -6,8 +6,8 @@
  */
 
 use ::sysinfo::System;
-use anyhow::{anyhow, bail, ensure, Context, Result};
-use gio::{prelude::SettingsExt, Settings};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use gio::{Settings, prelude::SettingsExt};
 use input_linux::Key;
 use nix::sys::signal;
 use nix::unistd::Pid;
@@ -650,8 +650,8 @@ impl<'dbus> OrcaManager<'dbus> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::systemd::test::MockUnit;
     use crate::systemd::ActiveState;
+    use crate::systemd::test::MockUnit;
     use crate::testing;
     use input_linux::{Key, KeyState};
     use std::time::Duration;

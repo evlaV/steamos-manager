@@ -63,14 +63,14 @@ pub use crate::tdp_limit1::TdpLimit1Proxy;
 pub use crate::update_bios1::UpdateBios1Proxy;
 pub use crate::update_dock1::UpdateDock1Proxy;
 pub use crate::wifi_backend1::WifiBackend1Proxy;
-pub use crate::wifi_debug1::WifiDebug1Proxy;
 pub use crate::wifi_debug_dump1::WifiDebugDump1Proxy;
+pub use crate::wifi_debug1::WifiDebug1Proxy;
 pub use crate::wifi_power_management1::WifiPowerManagement1Proxy;
 
 // Sub-interfaces
 mod job1;
 mod job_manager1;
 mod udev_events1;
-pub use crate::job1::Job1Proxy;
 pub use crate::job_manager1::JobManager1Proxy;
+pub use crate::job1::Job1Proxy;
 pub use crate::udev_events1::UdevEvents1Proxy;

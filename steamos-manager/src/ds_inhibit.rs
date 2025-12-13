@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use inotify::{Event, EventMask, EventStream, Inotify, WatchDescriptor, WatchMask};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -16,7 +16,7 @@ use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::{path, write_synced, Service};
+use crate::{Service, path, write_synced};
 
 struct HidNode {
     id: u32,
@@ -300,7 +300,7 @@ impl Service for Inhibitor {
 mod test {
     use super::*;
     use crate::testing;
-    use tokio::fs::{create_dir_all, read_to_string, remove_file, symlink, write, File};
+    use tokio::fs::{File, create_dir_all, read_to_string, remove_file, symlink, write};
 
     async fn try_read(path: &Path, expected: &str) -> bool {
         tokio::select! {
@@ -641,9 +641,11 @@ mod test {
             inhibitor.run().await.expect("run");
         });
 
-        assert!(read_to_string(sys_base.join("input/input0/inhibited"))
-            .await
-            .is_err());
+        assert!(
+            read_to_string(sys_base.join("input/input0/inhibited"))
+                .await
+                .is_err()
+        );
 
         File::create(hid.hidraw()).await.expect("hidraw");
         symlink(hid.hidraw(), path.join("proc/1/fd/3"))
@@ -677,9 +679,11 @@ mod test {
             inhibitor.run().await.expect("run");
         });
 
-        assert!(read_to_string(sys_base.join("input/input0/inhibited"))
-            .await
-            .is_err());
+        assert!(
+            read_to_string(sys_base.join("input/input0/inhibited"))
+                .await
+                .is_err()
+        );
 
         File::create(hid.hidraw()).await.expect("hidraw");
         symlink(hid.hidraw(), path("/proc/1/fd/3"))

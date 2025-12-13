@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use libc::pid_t;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -22,12 +22,12 @@ use tokio_stream::StreamExt;
 use tracing::error;
 use zbus::fdo::{self, IntrospectableProxy};
 use zbus::object_server::{Interface, InterfaceRef, SignalEmitter};
-use zbus::{interface, zvariant, Connection};
+use zbus::{Connection, interface, zvariant};
 use zbus_xml::Node;
 
+use crate::Service;
 use crate::error::{to_zbus_fdo_error, zbus_to_zbus_fdo};
 use crate::proxy::{Job1Proxy, JobManager1Proxy};
-use crate::Service;
 
 const JOB_PREFIX: &str = "/com/steampowered/SteamOSManager1/Jobs";
 

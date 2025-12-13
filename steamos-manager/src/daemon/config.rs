@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use config::builder::AsyncState;
 use config::{ConfigBuilder, FileFormat, FileStoredFormat};
 use std::io::ErrorKind;
@@ -13,7 +13,7 @@ use tokio::fs::{create_dir_all, read_to_string, write};
 use tracing::{error, info};
 
 use crate::daemon::DaemonContext;
-use crate::{read_config_directory, AsyncFileSource};
+use crate::{AsyncFileSource, read_config_directory};
 
 pub(in crate::daemon) async fn read_state<C: DaemonContext>(context: &C) -> Result<C::State> {
     let path = context.state_path()?;

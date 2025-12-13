@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 use anyhow::anyhow;
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use strum::{Display, EnumString};
@@ -20,12 +20,12 @@ use tokio::sync::{broadcast, oneshot};
 use tokio_stream::StreamExt;
 use tracing::debug;
 use zbus::proxy::PropertyChanged;
-use zbus::{fdo, Connection};
+use zbus::{Connection, fdo};
 
 use crate::daemon::user::{Command as DaemonCommand, UserCommand};
 use crate::manager::root::RootManagerProxy;
 use crate::systemd::{ActiveState, JobMode, SystemdUnit};
-use crate::{path, Service};
+use crate::{Service, path};
 
 const CONFIG_PREFIX: &str = "/etc/sddm.conf.d";
 const SESSION_CHECK_PATH: &str = "steamos.conf";
@@ -396,8 +396,8 @@ mod test {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::spawn;
-    use tokio::sync::mpsc::channel;
     use tokio::sync::Notify;
+    use tokio::sync::mpsc::channel;
     use tokio::time::sleep;
     use zbus::interface;
 
@@ -484,9 +484,11 @@ mod test {
         assert!(is_valid_desktop_session("plasma.desktop").await.unwrap());
         assert!(is_valid_desktop_session("plasmax11.desktop").await.unwrap());
         assert!(!is_valid_desktop_session("gamescope.desktop").await.unwrap());
-        assert!(!is_valid_desktop_session("doesnotexist.desktop")
-            .await
-            .unwrap());
+        assert!(
+            !is_valid_desktop_session("doesnotexist.desktop")
+                .await
+                .unwrap()
+        );
         assert!(!is_valid_desktop_session(".fake.desktop").await.unwrap());
         assert!(!is_valid_desktop_session("fake").await.unwrap());
     }

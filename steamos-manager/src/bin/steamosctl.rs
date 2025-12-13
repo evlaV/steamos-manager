@@ -8,7 +8,7 @@
 use anyhow::Result;
 use clap::{ArgAction, Parser, Subcommand};
 use itertools::Itertools;
-use nix::time::{clock_gettime, ClockId};
+use nix::time::{ClockId, clock_gettime};
 use std::collections::HashMap;
 use std::io::Cursor;
 use steamos_manager::audio::Mode;
@@ -27,7 +27,7 @@ use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
 use steamos_manager::wifi::{WifiBackend, WifiDebugMode, WifiPowerManagement};
 use zbus::fdo::{IntrospectableProxy, PropertiesProxy};
-use zbus::{zvariant, Connection};
+use zbus::{Connection, zvariant};
 use zbus_xml::Node;
 
 #[derive(Parser)]

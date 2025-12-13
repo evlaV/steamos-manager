@@ -5,14 +5,14 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, ensure, Result};
-use nix::time::{clock_gettime, ClockId};
+use anyhow::{Result, anyhow, ensure};
+use nix::time::{ClockId, clock_gettime};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use tokio::net::UnixDatagram;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -20,8 +20,8 @@ use tracing::{debug, error, info, trace, warn};
 use zbus::connection::Connection;
 use zbus::fdo::ObjectManager;
 
-use crate::daemon::config::{read_config, read_state, write_state};
 use crate::Service;
+use crate::daemon::config::{read_config, read_state, write_state};
 
 mod config;
 pub(crate) mod root;
@@ -54,7 +54,7 @@ pub(crate) trait DaemonContext: Sized {
     async fn reload(&mut self, config: Self::Config, daemon: &mut Daemon<Self>) -> Result<()>;
 
     async fn handle_command(&mut self, cmd: Self::Command, daemon: &mut Daemon<Self>)
-        -> Result<()>;
+    -> Result<()>;
 }
 
 pub(crate) struct Daemon<C: DaemonContext> {

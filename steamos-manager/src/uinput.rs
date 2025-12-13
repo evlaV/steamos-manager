@@ -5,14 +5,14 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 #[cfg(test)]
 use input_linux::InputEvent;
 use input_linux::{EventKind, EventTime, Key, KeyEvent, KeyState, SynchronizeEvent};
 #[cfg(not(test))]
 use input_linux::{InputId, UInputHandle};
 #[cfg(not(test))]
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{FcntlArg, OFlag, fcntl};
 #[cfg(test)]
 use std::collections::HashSet;
 #[cfg(test)]

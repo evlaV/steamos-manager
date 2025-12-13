@@ -5,16 +5,16 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{Result, anyhow, bail, ensure};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{read_dir, read_to_string};
-use tokio::sync::{oneshot, Mutex, Notify, OnceCell};
+use tokio::sync::{Mutex, Notify, OnceCell, oneshot};
 use tracing::{error, trace};
 
-use crate::write_synced;
 use crate::Service;
+use crate::write_synced;
 
 static SYSFS_WRITER: OnceCell<Arc<SysfsWriterQueue>> = OnceCell::const_new();
 

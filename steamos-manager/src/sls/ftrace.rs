@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
@@ -7,9 +7,9 @@ use tokio::fs::{self, File};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::unix::pipe;
 use tracing::{error, info};
-use zbus::{zvariant, Connection};
+use zbus::{Connection, zvariant};
 
-use crate::{get_appid, path, read_comm, Service};
+use crate::{Service, get_appid, path, read_comm};
 
 #[zbus::proxy(
     interface = "com.steampowered.SteamOSLogSubmitter.Trace",
@@ -135,7 +135,7 @@ mod test {
     use nix::sys::stat::Mode;
     use nix::unistd;
     use tokio::fs::{create_dir_all, read_to_string, try_exists, write};
-    use tokio::sync::mpsc::{error, unbounded_channel, UnboundedSender};
+    use tokio::sync::mpsc::{UnboundedSender, error, unbounded_channel};
     use zbus::fdo;
 
     struct MockTrace {

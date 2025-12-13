@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use config::builder::AsyncState;
 use config::{ConfigBuilder, FileFormat};
 use nix::sys::stat::{self, Mode};
@@ -26,7 +26,7 @@ use udev::{Event, EventType};
 use zbus::Connection;
 
 use crate::process::{run_script, script_output};
-use crate::systemd::{daemon_reload, JobMode, SystemdUnit};
+use crate::systemd::{JobMode, SystemdUnit, daemon_reload};
 use crate::udev::single_poll;
 use crate::{path, read_config_directory};
 

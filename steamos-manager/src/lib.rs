@@ -5,18 +5,18 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use config::builder::AsyncState;
 use config::{AsyncSource, ConfigBuilder, ConfigError, FileFormat, Format, Map, Value};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::future::Future;
 use std::io::ErrorKind;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use tokio::fs::{read_dir, read_to_string, File};
+use tokio::fs::{File, read_dir, read_to_string};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -199,11 +199,7 @@ pub(crate) fn get_appid(pid: u32) -> Result<Option<u64>> {
     } else {
         return Ok(None);
     };
-    if ppid > 1 {
-        get_appid(ppid)
-    } else {
-        Ok(None)
-    }
+    if ppid > 1 { get_appid(ppid) } else { Ok(None) }
 }
 
 pub(crate) async fn read_config_directory<P: AsRef<Path> + Sync + Send>(

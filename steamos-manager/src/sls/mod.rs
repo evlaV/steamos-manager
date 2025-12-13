@@ -4,11 +4,11 @@ pub mod ftrace;
 use anyhow::Result;
 use std::fmt::Debug;
 use std::time::SystemTime;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 use zbus::connection::Connection;
 
 use crate::Service;
