@@ -967,12 +967,11 @@ impl ScreenReader0 {
     #[zbus(property)]
     async fn voice_locales(&self) -> Vec<String> {
         let guard = self.screen_reader.lock().await;
-        let locales = guard
+        guard
             .get_voice_locales()
             .iter()
             .map(ToString::to_string) // clone each &str into a String
-            .collect::<Vec<String>>();
-        locales
+            .collect::<Vec<String>>()
     }
 
     #[zbus(property)]
