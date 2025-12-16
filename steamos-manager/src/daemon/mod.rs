@@ -104,6 +104,18 @@ impl NotifySocket {
             warn!("Couldn't notify systemd: {e}");
         }
     }
+
+    async fn ready(&mut self) {
+        self.notify("READY=1\n").await;
+    }
+
+    async fn begin_reload(&mut self) -> Result<()> {
+        let timestamp = clock_gettime(ClockId::CLOCK_MONOTONIC)?;
+        let timestamp = timestamp.tv_sec() * 1_000_000 + timestamp.tv_nsec() / 1_000;
+        let notifies = format!("RELOADING=1\nMONOTONIC_USEC={timestamp}\n");
+        self.notify(notifies.as_str()).await;
+        Ok(())
+    }
 }
 
 impl<C: DaemonContext> Daemon<C> {
@@ -154,7 +166,7 @@ impl<C: DaemonContext> Daemon<C> {
 
             // Tell systemd we're done loading
             let mut notify_socket = NotifySocket::default();
-            notify_socket.notify("READY=1\n").await;
+            notify_socket.ready().await;
             Ok(())
         });
 
@@ -182,14 +194,8 @@ impl<C: DaemonContext> Daemon<C> {
                 },
                 e = sighup.recv() => match e {
                     Some(()) => {
-                        match clock_gettime(ClockId::CLOCK_MONOTONIC) {
-                            Ok(timestamp) => {
-                                let timestamp = timestamp.tv_sec() * 1_000_000 +
-                                    timestamp.tv_nsec() / 1_000;
-                                let notifies = format!("RELOADING=1\nMONOTONIC_USEC={timestamp}\n");
-                                self.notify_socket.notify(notifies.as_str()).await;
-                            }
-                            Err(e) => warn!("Failed to notify systemd: {e}"),
+                        if let Err(e) = self.notify_socket.begin_reload().await {
+                            warn!("Failed to notify systemd: {e}");
                         }
                         let res = match read_config(&context).await {
                             Ok(config) =>
@@ -199,7 +205,7 @@ impl<C: DaemonContext> Daemon<C> {
                                 Ok(())
                             }
                         };
-                        self.notify_socket.notify("READY=1\n").await;
+                        self.notify_socket.ready().await;
                         res
                     }
                     None => Err(anyhow!("SIGHUP pipe broke")),
