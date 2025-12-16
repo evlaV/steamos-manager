@@ -91,29 +91,31 @@ impl NotifySocket {
         Ok(())
     }
 
-    async fn notify(&mut self, message: &str) {
-        if let Err(e) = self.setup_socket().await {
-            warn!("Couldn't set up systemd notify socket: {e}");
-            return;
-        }
+    async fn notify(&mut self, message: &str) -> Result<()> {
+        self.setup_socket()
+            .await
+            .inspect_err(|e| warn!("Couldn't set up systemd notify socket: {e}"))?;
         let Some(ref socket) = self.socket else {
-            return;
+            return Ok(());
         };
         trace!("Sending message to systemd: {message}");
-        if let Err(e) = socket.send(message.as_bytes()).await {
-            warn!("Couldn't notify systemd: {e}");
-        }
+        socket
+            .send(message.as_bytes())
+            .await
+            .inspect_err(|e| warn!("Couldn't notify systemd: {e}"))?;
+        Ok(())
     }
 
-    async fn ready(&mut self) {
-        self.notify("READY=1\n").await;
+    async fn ready(&mut self) -> Result<()> {
+        self.notify("READY=1\n").await
     }
 
     async fn begin_reload(&mut self) -> Result<()> {
-        let timestamp = clock_gettime(ClockId::CLOCK_MONOTONIC)?;
+        let timestamp = clock_gettime(ClockId::CLOCK_MONOTONIC)
+            .inspect_err(|e| warn!("Couldn't get timestamp when notifying systemd: {e}"))?;
         let timestamp = timestamp.tv_sec() * 1_000_000 + timestamp.tv_nsec() / 1_000;
         let notifies = format!("RELOADING=1\nMONOTONIC_USEC={timestamp}\n");
-        self.notify(notifies.as_str()).await;
+        self.notify(notifies.as_str()).await?;
         Ok(())
     }
 }
@@ -166,8 +168,7 @@ impl<C: DaemonContext> Daemon<C> {
 
             // Tell systemd we're done loading
             let mut notify_socket = NotifySocket::default();
-            notify_socket.ready().await;
-            Ok(())
+            notify_socket.ready().await
         });
 
         let mut res = loop {
@@ -194,9 +195,7 @@ impl<C: DaemonContext> Daemon<C> {
                 },
                 e = sighup.recv() => match e {
                     Some(()) => {
-                        if let Err(e) = self.notify_socket.begin_reload().await {
-                            warn!("Failed to notify systemd: {e}");
-                        }
+                        let _ = self.notify_socket.begin_reload().await;
                         let res = match read_config(&context).await {
                             Ok(config) =>
                                 context.reload(config, self).await,
@@ -205,7 +204,7 @@ impl<C: DaemonContext> Daemon<C> {
                                 Ok(())
                             }
                         };
-                        self.notify_socket.ready().await;
+                        let _ = self.notify_socket.ready().await;
                         res
                     }
                     None => Err(anyhow!("SIGHUP pipe broke")),
