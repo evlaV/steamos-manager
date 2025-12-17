@@ -109,8 +109,8 @@ pub enum JobMode {
 }
 
 pub struct SystemdUnit<'dbus> {
-    connection: Connection,
     pub(crate) proxy: SystemdUnitProxy<'dbus>,
+    manager: SystemdManagerProxy<'dbus>,
     name: String,
 }
 
@@ -137,15 +137,16 @@ impl<'dbus> SystemdUnit<'dbus> {
         }
     }
 
-    pub async fn new(connection: Connection, name: &str) -> Result<SystemdUnit<'dbus>> {
+    pub async fn new(connection: &Connection, name: &str) -> Result<SystemdUnit<'dbus>> {
         let path = PathBuf::from("/org/freedesktop/systemd1/unit").join(escape(name));
         let path = String::from(path.to_str().ok_or(anyhow!("Unit name {name} invalid"))?);
+        let manager = SystemdManagerProxy::new(connection).await?;
         Ok(SystemdUnit {
-            proxy: SystemdUnitProxy::builder(&connection)
+            proxy: SystemdUnitProxy::builder(connection)
                 .path(path)?
                 .build()
                 .await?,
-            connection,
+            manager,
             name: String::from(name),
         })
     }
@@ -167,8 +168,8 @@ impl<'dbus> SystemdUnit<'dbus> {
 
     #[allow(unused)]
     pub async fn enable(&self) -> Result<bool> {
-        let manager = SystemdManagerProxy::new(&self.connection).await?;
-        let (_, res) = manager
+        let (_, res) = self
+            .manager
             .enable_unit_files(&[self.name.as_str()], false, false)
             .await?;
         Ok(!res.is_empty())
@@ -176,24 +177,24 @@ impl<'dbus> SystemdUnit<'dbus> {
 
     #[allow(unused)]
     pub async fn disable(&self) -> Result<bool> {
-        let manager = SystemdManagerProxy::new(&self.connection).await?;
-        let res = manager
+        let res = self
+            .manager
             .disable_unit_files(&[self.name.as_str()], false)
             .await?;
         Ok(!res.is_empty())
     }
 
     pub async fn mask(&self) -> Result<bool> {
-        let manager = SystemdManagerProxy::new(&self.connection).await?;
-        let res = manager
+        let res = self
+            .manager
             .mask_unit_files(&[self.name.as_str()], false, false)
             .await?;
         Ok(!res.is_empty())
     }
 
     pub async fn unmask(&self) -> Result<bool> {
-        let manager = SystemdManagerProxy::new(&self.connection).await?;
-        let res = manager
+        let res = self
+            .manager
             .unmask_unit_files(&[self.name.as_str()], false)
             .await?;
         Ok(!res.is_empty())
@@ -483,7 +484,7 @@ pub mod test {
 
         sleep(Duration::from_millis(10)).await;
 
-        let unit = SystemdUnit::new(connection.clone(), "test.service")
+        let unit = SystemdUnit::new(&connection, "test.service")
             .await
             .expect("unit");
         assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
@@ -535,7 +536,7 @@ pub mod test {
 
         sleep(Duration::from_millis(10)).await;
 
-        let unit = SystemdUnit::new(connection.clone(), "test.service")
+        let unit = SystemdUnit::new(&connection, "test.service")
             .await
             .expect("unit");
         assert!(unit.enable().await.unwrap());

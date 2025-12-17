@@ -64,12 +64,9 @@ pub(crate) struct HdmiCecControl<'dbus> {
 impl<'dbus> HdmiCecControl<'dbus> {
     pub async fn new(connection: &Connection) -> Result<HdmiCecControl<'dbus>> {
         Ok(HdmiCecControl {
-            plasma_rc_unit: SystemdUnit::new(
-                connection.clone(),
-                "plasma-remotecontrollers.service",
-            )
-            .await?,
-            wakehook_unit: SystemdUnit::new(connection.clone(), "wakehook.service").await?,
+            plasma_rc_unit: SystemdUnit::new(connection, "plasma-remotecontrollers.service")
+                .await?,
+            wakehook_unit: SystemdUnit::new(connection, "wakehook.service").await?,
             connection: connection.clone(),
         })
     }

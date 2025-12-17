@@ -243,10 +243,10 @@ pub(crate) async fn set_cpu_scaling_governor(governor: CPUScalingGovernor) -> Re
 }
 
 impl<'dbus> CpuSchedulerManager<'dbus> {
-    pub async fn new(connection: Connection) -> Result<CpuSchedulerManager<'dbus>> {
+    pub async fn new(connection: &Connection) -> Result<CpuSchedulerManager<'dbus>> {
         // Try to create a SystemdUnit for scx.service; if systemd isn't available in the
         // test DBus environment, treat the service as not installed instead of failing.
-        let scx_unit = match SystemdUnit::new(connection.clone(), "scx.service").await {
+        let scx_unit = match SystemdUnit::new(connection, "scx.service").await {
             Ok(u) => Some(u),
             Err(e) => {
                 warn!("Could not create SystemdUnit for scx.service: {e}");

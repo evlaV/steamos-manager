@@ -109,10 +109,10 @@ pub(crate) async fn setup_iwd_config(want_override: bool) -> std::io::Result<()>
     }
 }
 
-async fn restart_iwd(connection: Connection) -> Result<()> {
+async fn restart_iwd(connection: &Connection) -> Result<()> {
     // First reload systemd since we modified the config most likely
     // otherwise we wouldn't be restarting iwd.
-    daemon_reload(&connection)
+    daemon_reload(connection)
         .await
         .inspect_err(|message| error!("restart_iwd: reload systemd got an error: {message}"))?;
 
@@ -165,7 +165,7 @@ pub(crate) async fn set_wifi_debug_mode(
     mode: WifiDebugMode,
     buffer_size: u32,
     should_trace: bool,
-    connection: Connection,
+    connection: &Connection,
 ) -> Result<()> {
     match get_wifi_backend().await {
         Ok(WifiBackend::Iwd) => (),

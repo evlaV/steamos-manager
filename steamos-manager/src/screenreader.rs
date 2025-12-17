@@ -117,7 +117,7 @@ fn default_map() -> Value {
 impl<'dbus> OrcaManager<'dbus> {
     pub async fn new(connection: &Connection) -> Result<OrcaManager<'dbus>> {
         let mut manager = OrcaManager {
-            orca_unit: SystemdUnit::new(connection.clone(), "orca.service").await?,
+            orca_unit: SystemdUnit::new(connection, "orca.service").await?,
             rate: RATE_DEFAULT,
             pitch: PITCH_DEFAULT,
             volume: VOLUME_DEFAULT,
@@ -677,7 +677,7 @@ mod test {
 
         sleep(Duration::from_millis(10)).await;
 
-        let unit = SystemdUnit::new(connection.clone(), "orca.service")
+        let unit = SystemdUnit::new(&connection, "orca.service")
             .await
             .expect("unit");
 

@@ -91,7 +91,7 @@ impl SteamOSManager {
             should_trace: steam_deck_variant().await.unwrap_or_default()
                 == SteamDeckVariant::Galileo,
             job_manager: JobManager::new(connection.clone()).await?,
-            cpu_scheduler_manager: CpuSchedulerManager::new(connection.clone()).await?,
+            cpu_scheduler_manager: CpuSchedulerManager::new(&connection).await?,
             connection,
             channel,
             order: SerialOrderValidator::default(),
@@ -483,7 +483,7 @@ impl SteamOSManager {
             wanted_mode,
             buffer_size,
             self.should_trace,
-            self.connection.clone(),
+            &self.connection,
         )
         .await
         {
