@@ -120,7 +120,8 @@ async fn restart_iwd(connection: &Connection) -> Result<()> {
     let unit = SystemdUnit::new(connection, "iwd.service").await?;
     unit.restart(JobMode::Fail)
         .await
-        .inspect_err(|message| error!("restart_iwd: restart unit got an error: {message}"))
+        .inspect_err(|message| error!("restart_iwd: restart unit got an error: {message}"))?;
+    Ok(())
 }
 
 async fn stop_tracing() -> Result<()> {

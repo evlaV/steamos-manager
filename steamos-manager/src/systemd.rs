@@ -5,11 +5,12 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum::{Display, EnumString};
-use zbus::zvariant::OwnedObjectPath;
+use tokio_stream::StreamExt;
+use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::{self, Connection};
 
 #[zbus::proxy(
@@ -63,6 +64,15 @@ trait SystemdManager {
     async fn reload(&self) -> zbus::Result<()>;
 
     async fn get_unit(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
+
+    #[zbus(signal)]
+    async fn job_removed(
+        &self,
+        id: u32,
+        job: ObjectPath<'_>,
+        unit: &str,
+        result: &str,
+    ) -> zbus::Result<()>;
 }
 
 #[derive(Display, EnumString, PartialEq, Debug, Copy, Clone)]
@@ -108,10 +118,26 @@ pub enum JobMode {
     IgnoreRequirements,
 }
 
+#[derive(Display, EnumString, PartialEq, Debug, Copy, Clone)]
+#[strum(serialize_all = "kebab-case")]
+pub enum JobResult {
+    Done,
+    Canceled,
+    Timeout,
+    Failed,
+    Dependency,
+    Skipped,
+}
+
 pub struct SystemdUnit<'dbus> {
     pub(crate) proxy: SystemdUnitProxy<'dbus>,
     manager: SystemdManagerProxy<'dbus>,
     name: String,
+}
+
+pub struct SystemdJobWaiter {
+    receiver: JobRemovedStream,
+    object: OwnedObjectPath,
 }
 
 pub async fn daemon_reload(connection: &Connection) -> Result<()> {
@@ -151,19 +177,22 @@ impl<'dbus> SystemdUnit<'dbus> {
         })
     }
 
-    pub async fn restart(&self, job_mode: JobMode) -> Result<()> {
-        self.proxy.restart(job_mode.to_string().as_str()).await?;
-        Ok(())
+    pub async fn restart(&self, job_mode: JobMode) -> Result<SystemdJobWaiter> {
+        let receiver = self.manager.receive_job_removed().await?;
+        let object = self.proxy.restart(job_mode.to_string().as_str()).await?;
+        Ok(SystemdJobWaiter { receiver, object })
     }
 
-    pub async fn start(&self, job_mode: JobMode) -> Result<()> {
-        self.proxy.start(job_mode.to_string().as_str()).await?;
-        Ok(())
+    pub async fn start(&self, job_mode: JobMode) -> Result<SystemdJobWaiter> {
+        let receiver = self.manager.receive_job_removed().await?;
+        let object = self.proxy.start(job_mode.to_string().as_str()).await?;
+        Ok(SystemdJobWaiter { receiver, object })
     }
 
-    pub async fn stop(&self, job_mode: JobMode) -> Result<()> {
-        self.proxy.stop(job_mode.to_string().as_str()).await?;
-        Ok(())
+    pub async fn stop(&self, job_mode: JobMode) -> Result<SystemdJobWaiter> {
+        let receiver = self.manager.receive_job_removed().await?;
+        let object = self.proxy.stop(job_mode.to_string().as_str()).await?;
+        Ok(SystemdJobWaiter { receiver, object })
     }
 
     #[allow(unused)]
@@ -210,6 +239,19 @@ impl<'dbus> SystemdUnit<'dbus> {
         Ok(EnableState::from_str(
             self.proxy.unit_file_state().await?.as_str(),
         )?)
+    }
+}
+
+impl SystemdJobWaiter {
+    pub async fn wait(mut self) -> Result<JobResult> {
+        while let Some(job) = self.receiver.next().await {
+            let args = job.args()?;
+            if args.job != self.object.as_ref() {
+                continue;
+            }
+            return Ok(JobResult::try_from(args.result)?);
+        }
+        bail!("Job removed pipe exited prematurely");
     }
 }
 
@@ -294,6 +336,7 @@ pub mod test {
         async fn restart(
             &mut self,
             mode: &str,
+            #[zbus(object_server)] object_server: &ObjectServer,
             #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
         ) -> fdo::Result<OwnedObjectPath> {
             if JobMode::from_str(mode).is_err() {
@@ -301,6 +344,12 @@ pub mod test {
             }
             let path = ObjectPath::try_from(format!("/restart/{mode}/{}", self.job))
                 .map_err(to_zbus_fdo_error)?;
+            let manager = object_server
+                .interface::<_, MockManager>("/org/freedesktop/systemd1")
+                .await?;
+            manager
+                .job_removed(self.job, path.clone(), "", "done")
+                .await?;
             self.job += 1;
             self.active = String::from("active");
             self.active_state_changed(&ctx).await?;
@@ -310,6 +359,7 @@ pub mod test {
         async fn start(
             &mut self,
             mode: &str,
+            #[zbus(object_server)] object_server: &ObjectServer,
             #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
         ) -> fdo::Result<OwnedObjectPath> {
             if JobMode::from_str(mode).is_err() {
@@ -317,6 +367,12 @@ pub mod test {
             }
             let path = ObjectPath::try_from(format!("/start/{mode}/{}", self.job))
                 .map_err(to_zbus_fdo_error)?;
+            let manager = object_server
+                .interface::<_, MockManager>("/org/freedesktop/systemd1")
+                .await?;
+            manager
+                .job_removed(self.job, path.clone(), "", "done")
+                .await?;
             self.job += 1;
             self.active = String::from("active");
             self.active_state_changed(&ctx).await?;
@@ -326,6 +382,7 @@ pub mod test {
         async fn stop(
             &mut self,
             mode: &str,
+            #[zbus(object_server)] object_server: &ObjectServer,
             #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
         ) -> fdo::Result<OwnedObjectPath> {
             if JobMode::from_str(mode).is_err() {
@@ -333,6 +390,12 @@ pub mod test {
             }
             let path = ObjectPath::try_from(format!("/stop/{mode}/{}", self.job))
                 .map_err(to_zbus_fdo_error)?;
+            let manager = object_server
+                .interface::<_, MockManager>("/org/freedesktop/systemd1")
+                .await?;
+            manager
+                .job_removed(self.job, path.clone(), "", "done")
+                .await?;
             self.job += 1;
             self.active = String::from("inactive");
             self.active_state_changed(&ctx).await?;
@@ -455,6 +518,15 @@ pub mod test {
                     .into(),
             )
         }
+
+        #[zbus(signal)]
+        async fn job_removed(
+            signal_emitter: &SignalEmitter<'_>,
+            id: u32,
+            job: ObjectPath<'_>,
+            unit: &str,
+            result: &str,
+        ) -> zbus::Result<()>;
     }
 
     #[tokio::test]

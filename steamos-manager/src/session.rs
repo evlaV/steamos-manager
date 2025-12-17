@@ -203,7 +203,8 @@ impl SessionManager {
         SystemdUnit::new(&self.connection, "graphical-session.target")
             .await?
             .stop(JobMode::Fail)
-            .await
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn switch_to_login_mode(&self, mode: LoginMode) -> Result<()> {
