@@ -26,6 +26,7 @@ pub(crate) trait SystemdUnit {
     async fn restart(&self, mode: &str) -> zbus::Result<OwnedObjectPath>;
     async fn start(&self, mode: &str) -> zbus::Result<OwnedObjectPath>;
     async fn stop(&self, mode: &str) -> zbus::Result<OwnedObjectPath>;
+    async fn reload(&self, mode: &str) -> zbus::Result<OwnedObjectPath>;
 }
 
 #[zbus::proxy(
@@ -192,6 +193,12 @@ impl<'dbus> SystemdUnit<'dbus> {
     pub async fn stop(&self, job_mode: JobMode) -> Result<SystemdJobWaiter> {
         let receiver = self.manager.receive_job_removed().await?;
         let object = self.proxy.stop(job_mode.to_string().as_str()).await?;
+        Ok(SystemdJobWaiter { receiver, object })
+    }
+
+    pub async fn reload(&self, job_mode: JobMode) -> Result<SystemdJobWaiter> {
+        let receiver = self.manager.receive_job_removed().await?;
+        let object = self.proxy.reload(job_mode.to_string().as_str()).await?;
         Ok(SystemdJobWaiter { receiver, object })
     }
 
@@ -399,6 +406,23 @@ pub mod test {
             self.job += 1;
             self.active = String::from("inactive");
             self.active_state_changed(&ctx).await?;
+            Ok(path.into())
+        }
+
+        async fn reload(
+            &mut self,
+            mode: &str,
+            #[zbus(object_server)] object_server: &ObjectServer,
+        ) -> fdo::Result<OwnedObjectPath> {
+            let path = ObjectPath::try_from(format!("/reload/{mode}/{}", self.job))
+                .map_err(to_zbus_fdo_error)?;
+            let manager = object_server
+                .interface::<_, MockManager>("/org/freedesktop/systemd1")
+                .await?;
+            manager
+                .job_removed(self.job, path.clone(), "", "done")
+                .await?;
+            self.job += 1;
             Ok(path.into())
         }
     }

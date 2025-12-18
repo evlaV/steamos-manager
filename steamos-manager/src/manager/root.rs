@@ -146,7 +146,7 @@ impl SteamOSManager {
             Ok(state) => state,
             Err(err) => return Err(to_zbus_fdo_error(err)),
         };
-        set_wifi_power_management_state(state)
+        set_wifi_power_management_state(state, &self.connection)
             .await
             .map_err(to_zbus_fdo_error)
     }
