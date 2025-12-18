@@ -509,7 +509,7 @@ impl SteamOSManager {
             Ok(backend) => backend,
             Err(e) => return Err(fdo::Error::InvalidArgs(e.to_string())),
         };
-        set_wifi_backend(backend)
+        set_wifi_backend(backend, &self.connection)
             .await
             .inspect_err(|message| error!("Error setting wifi backend: {message}"))
             .map_err(to_zbus_fdo_error)

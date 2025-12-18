@@ -21,7 +21,8 @@ use strum::{Display, EnumString};
 use tempfile::Builder as TempFileBuilder;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::error;
+use tokio::time::sleep;
+use tracing::{debug, error};
 use udev::{Event, EventType};
 use zbus::Connection;
 
@@ -47,6 +48,7 @@ const WIFI_BACKEND_PATHS: &[&str] = &[
     "/usr/lib/NetworkManager/conf.d",
     "/etc/NetworkManager/conf.d",
 ];
+const WIFI_BACKEND_FILE: &str = "/etc/NetworkManager/conf.d/99-valve-wifi-backend.conf";
 
 #[derive(Display, EnumString, PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
@@ -88,6 +90,22 @@ pub enum WifiPowerManagement {
 pub enum WifiBackend {
     Iwd = 0,
     WPASupplicant = 1,
+}
+
+#[derive(PartialEq, Debug, Copy, Clone, Default, TryFromPrimitive)]
+#[repr(i64)]
+enum NmSettingWirelessPowersave {
+    Default = 0,
+    Ignore = 1,
+    Disable = 2,
+    #[default]
+    Enable = 3,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+struct NmWifiSettings {
+    backend: WifiBackend,
+    powersave: NmSettingWirelessPowersave,
 }
 
 pub(crate) async fn setup_iwd_config(want_override: bool) -> std::io::Result<()> {
@@ -213,23 +231,136 @@ pub(crate) async fn set_wifi_debug_mode(
     Ok(())
 }
 
-pub(crate) async fn get_wifi_backend() -> Result<WifiBackend> {
+// This function re-creates the network interface if missing.
+//
+// As described in https://iwd.wiki.kernel.org/interface_lifecycle,#
+// iwd destroys and re-creates the network interface, unless configured
+// otherwise by "[DriverQuirks] DefaultInterface" or disabled by
+// default in the source (it happens for some drivers):
+// https://git.kernel.org/pub/scm/network/wireless/iwd.git/tree/src/wiphy.c?h=2.14#n88
+//
+// The original LCD model has one of the drivers in which this is
+// disabled at the source-code level, but in the OLED/Galileo model
+// with the ath11k* driver, it is not.
+//
+// NetworkManager brings up the service providing wifi.backend as
+// necessary, but this does not happen when the interface is not
+// present.  So in the OLED model, when switching from "iwd" to
+// "wpa_supplicant", "iwd" destroys the interface when stopped, NM
+// never brings up the newly configured back-end "wpa_supplicant", and
+// the system remains disconnected forever.  When switching from
+// "wpa_supplicant" to "iwd" it's all right because "wpa_supplicant"
+// doesn't destroy the network interface.  And similarly, in the LCD
+// model the interface is never destroyed, so NM always brings up the
+// service for the corresponding wifi.backend just fine.
+//
+// Unfortunately iwd does not support "config fragments" and
+// NetworkManager does not have config for this option like with
+// 'wifi.iwd.autoconnect', so the only possible way is to edit
+// '/etc/iwd/main.conf', which is not the cleanest solution.
+//
+// So, in order to work around this problem, this function re-creates
+// the network interface if missing.
+//
+// Originally discussed in:
+// https://gitlab.steamos.cloud/holo/holo/-/merge_requests/747
+async fn ensure_default_interface() -> Result<()> {
+    if !list_wifi_interfaces().await?.is_empty() {
+        return Ok(());
+    }
+    debug!("Missing wlan interace, creating it explicitly");
+    run_script(
+        "/usr/bin/iw",
+        &[
+            "phy",
+            "phy0",
+            "interface",
+            "add",
+            "wlan0",
+            "type",
+            "station",
+        ],
+    )
+    .await?;
+    for _ in 0..10 {
+        if !list_wifi_interfaces().await?.is_empty() {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    bail!("wlan0 could not be created");
+}
+
+async fn get_nm_settings() -> Result<NmWifiSettings> {
     let mut builder = ConfigBuilder::<AsyncState>::default();
     for dir in WIFI_BACKEND_PATHS {
         builder = read_config_directory(builder, path(dir), &["conf"], FileFormat::Ini).await?;
     }
     let config = builder.build().await?;
 
-    if let Some(backend) = config.get_table("device")?.remove("wifi.backend") {
-        let backend = backend.into_string()?;
-        return Ok(WifiBackend::from_str(backend.as_str())?);
+    let backend;
+    if let Some(be) = config
+        .get_table("device")
+        .ok()
+        .and_then(|mut t| t.remove("wifi.backend"))
+    {
+        let be = be.into_string()?;
+        backend = WifiBackend::from_str(be.as_str())?;
+    } else {
+        bail!("Wi-Fi backend not found in config");
     }
 
-    bail!("Wi-Fi backend not found in config");
+    let powersave;
+    if let Some(ps) = config
+        .get_table("connection")
+        .ok()
+        .and_then(|mut t| t.remove("wifi.powersave"))
+    {
+        let ps = ps.into_int()?;
+        powersave = NmSettingWirelessPowersave::try_from(ps)?;
+    } else {
+        powersave = NmSettingWirelessPowersave::default();
+    }
+
+    Ok(NmWifiSettings { powersave, backend })
 }
 
-pub(crate) async fn set_wifi_backend(backend: WifiBackend) -> Result<()> {
-    run_script("/usr/bin/steamos-wifi-set-backend", &[backend.to_string()]).await
+async fn set_nm_settings(settings: NmWifiSettings, connection: &Connection) -> Result<()> {
+    let NmWifiSettings { powersave, backend } = settings;
+    let powersave = powersave as i64;
+    let contents =
+        format!("[connection]\nwifi.powersave={powersave}\n[device]\nwifi.backend={backend}\n");
+    fs::write(path(WIFI_BACKEND_FILE), contents).await?;
+
+    // Stop the other backend and restart NM
+    let unit = SystemdUnit::new(connection, "NetworkManager.service").await?;
+    let backend_unit = SystemdUnit::new(
+        connection,
+        match backend {
+            WifiBackend::Iwd => "wpa_supplicant.service",
+            WifiBackend::WPASupplicant => "iwd.service",
+        },
+    )
+    .await?;
+
+    unit.stop(JobMode::Fail).await?.wait().await?;
+    // These systemd units are not set to enabled permanently, NetworkManager will pull them as necessary
+    backend_unit.disable().await?;
+    backend_unit.stop(JobMode::Fail).await?.wait().await?;
+
+    ensure_default_interface().await?;
+    unit.start(JobMode::Fail).await?;
+    Ok(())
+}
+
+pub(crate) async fn get_wifi_backend() -> Result<WifiBackend> {
+    Ok(get_nm_settings().await?.backend)
+}
+
+pub(crate) async fn set_wifi_backend(backend: WifiBackend, connection: &Connection) -> Result<()> {
+    let mut settings = get_nm_settings().await?;
+    settings.backend = backend;
+    set_nm_settings(settings, connection).await
 }
 
 pub(crate) async fn list_wifi_interfaces() -> Result<Vec<String>> {
@@ -390,6 +521,58 @@ mod test {
         assert_eq!(
             read_to_string(path(OVERRIDE_PATH)).await.unwrap(),
             OVERRIDE_CONTENTS
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_nm_settings() {
+        let _h = testing::start();
+
+        for dir in WIFI_BACKEND_PATHS {
+            create_dir_all(path(dir)).await.expect("create_dir_all");
+        }
+
+        assert!(get_nm_settings().await.is_err());
+
+        write(path(WIFI_BACKEND_PATHS[0]).join("test.conf"), "[device]")
+            .await
+            .expect("write");
+        assert!(get_nm_settings().await.is_err());
+
+        write(
+            path(WIFI_BACKEND_PATHS[0]).join("test.conf"),
+            "[device]\nwifi.backend=iwd\n",
+        )
+        .await
+        .expect("write");
+        assert_eq!(
+            get_nm_settings().await.unwrap(),
+            NmWifiSettings {
+                powersave: NmSettingWirelessPowersave::default(),
+                backend: WifiBackend::Iwd,
+            }
+        );
+
+        write(
+            path(WIFI_BACKEND_PATHS[0]).join("test.conf"),
+            "[connection]\nwifi.powersave=2\n",
+        )
+        .await
+        .expect("write");
+        assert!(get_nm_settings().await.is_err());
+
+        write(
+            path(WIFI_BACKEND_PATHS[0]).join("test.conf"),
+            "[device]\nwifi.backend=iwd\n[connection]\nwifi.powersave=2\n",
+        )
+        .await
+        .expect("write");
+        assert_eq!(
+            get_nm_settings().await.unwrap(),
+            NmWifiSettings {
+                powersave: NmSettingWirelessPowersave::try_from(2).unwrap(),
+                backend: WifiBackend::Iwd,
+            }
         );
     }
 
