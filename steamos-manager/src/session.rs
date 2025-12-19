@@ -173,7 +173,7 @@ impl SessionManager {
     }
 
     async fn unit_is_active(&self, unit: &str) -> Result<bool> {
-        let unit = SystemdUnit::new(self.connection.clone(), unit).await?;
+        let unit = SystemdUnit::new(&self.connection, unit).await?;
         match unit.active().await {
             Ok(state) => Ok(state.is_active()),
             Err(e) => {
@@ -200,10 +200,11 @@ impl SessionManager {
     }
 
     async fn logout(&self) -> Result<()> {
-        SystemdUnit::new(self.connection.clone(), "graphical-session.target")
+        SystemdUnit::new(&self.connection, "graphical-session.target")
             .await?
             .stop(JobMode::Fail)
-            .await
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn switch_to_login_mode(&self, mode: LoginMode) -> Result<()> {
@@ -333,7 +334,7 @@ impl Service for SessionManagerService {
     const NAME: &'static str = "session-manager";
 
     async fn run(&mut self) -> Result<()> {
-        let unit = SystemdUnit::new(self.session.clone(), "gamescope-session.service").await?;
+        let unit = SystemdUnit::new(&self.session, "gamescope-session.service").await?;
 
         let stream = unit
             .proxy

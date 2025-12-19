@@ -292,8 +292,7 @@ impl FanControl {
             .and_then(|config| config.fan_control.as_ref())
         {
             Some(ServiceConfig::Systemd(service)) => {
-                let jupiter_fan_control =
-                    SystemdUnit::new(self.connection.clone(), service).await?;
+                let jupiter_fan_control = SystemdUnit::new(&self.connection, service).await?;
                 let active = jupiter_fan_control.active().await?;
                 Ok(if active.is_active() {
                     FanControlState::Os
@@ -322,23 +321,23 @@ impl FanControl {
             .and_then(|config| config.fan_control.as_ref())
         {
             Some(ServiceConfig::Systemd(service)) => {
-                let jupiter_fan_control =
-                    SystemdUnit::new(self.connection.clone(), service).await?;
+                let jupiter_fan_control = SystemdUnit::new(&self.connection, service).await?;
                 match state {
-                    FanControlState::Os => jupiter_fan_control.start(JobMode::Fail).await,
-                    FanControlState::Bios => jupiter_fan_control.stop(JobMode::Fail).await,
-                }
+                    FanControlState::Os => jupiter_fan_control.start(JobMode::Fail).await?,
+                    FanControlState::Bios => jupiter_fan_control.stop(JobMode::Fail).await?,
+                };
             }
             Some(ServiceConfig::Script {
                 start,
                 stop,
                 status: _,
             }) => match state {
-                FanControlState::Os => run_script(&start.script, &start.script_args).await,
-                FanControlState::Bios => run_script(&stop.script, &stop.script_args).await,
+                FanControlState::Os => run_script(&start.script, &start.script_args).await?,
+                FanControlState::Bios => run_script(&stop.script, &stop.script_args).await?,
             },
             None => bail!("Fan control not configured"),
         }
+        Ok(())
     }
 }
 

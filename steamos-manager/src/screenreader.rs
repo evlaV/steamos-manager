@@ -117,7 +117,7 @@ fn default_map() -> Value {
 impl<'dbus> OrcaManager<'dbus> {
     pub async fn new(connection: &Connection) -> Result<OrcaManager<'dbus>> {
         let mut manager = OrcaManager {
-            orca_unit: SystemdUnit::new(connection.clone(), "orca.service").await?,
+            orca_unit: SystemdUnit::new(connection, "orca.service").await?,
             rate: RATE_DEFAULT,
             pitch: PITCH_DEFAULT,
             volume: VOLUME_DEFAULT,
@@ -638,12 +638,14 @@ impl<'dbus> OrcaManager<'dbus> {
 
     async fn restart_orca(&self) -> Result<()> {
         trace!("Restarting orca...");
-        self.orca_unit.restart(JobMode::Fail).await
+        self.orca_unit.restart(JobMode::Fail).await?;
+        Ok(())
     }
 
     pub async fn stop_orca(&self) -> Result<()> {
         trace!("Stopping orca...");
-        self.orca_unit.stop(JobMode::Fail).await
+        self.orca_unit.stop(JobMode::Fail).await?;
+        Ok(())
     }
 }
 
@@ -651,7 +653,7 @@ impl<'dbus> OrcaManager<'dbus> {
 mod test {
     use super::*;
     use crate::systemd::ActiveState;
-    use crate::systemd::test::MockUnit;
+    use crate::systemd::test::{MockManager, MockUnit};
     use crate::testing;
     use input_linux::{Key, KeyState};
     use std::time::Duration;
@@ -671,13 +673,17 @@ mod test {
             .expect("request_name");
         let object_server = connection.object_server();
         object_server
+            .at("/org/freedesktop/systemd1", MockManager::default())
+            .await
+            .expect("at");
+        object_server
             .at("/org/freedesktop/systemd1/unit/orca_2eservice", unit)
             .await
             .expect("at");
 
         sleep(Duration::from_millis(10)).await;
 
-        let unit = SystemdUnit::new(connection.clone(), "orca.service")
+        let unit = SystemdUnit::new(&connection, "orca.service")
             .await
             .expect("unit");
 

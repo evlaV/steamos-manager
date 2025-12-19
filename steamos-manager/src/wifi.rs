@@ -21,7 +21,8 @@ use strum::{Display, EnumString};
 use tempfile::Builder as TempFileBuilder;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::error;
+use tokio::time::sleep;
+use tracing::{debug, error};
 use udev::{Event, EventType};
 use zbus::Connection;
 
@@ -47,6 +48,7 @@ const WIFI_BACKEND_PATHS: &[&str] = &[
     "/usr/lib/NetworkManager/conf.d",
     "/etc/NetworkManager/conf.d",
 ];
+const WIFI_BACKEND_FILE: &str = "/etc/NetworkManager/conf.d/99-valve-wifi-backend.conf";
 
 #[derive(Display, EnumString, PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
@@ -82,12 +84,37 @@ pub enum WifiPowerManagement {
     Enabled = 1,
 }
 
+impl Into<NmSettingWirelessPowersave> for WifiPowerManagement {
+    fn into(self) -> NmSettingWirelessPowersave {
+        match self {
+            WifiPowerManagement::Disabled => NmSettingWirelessPowersave::Disable,
+            WifiPowerManagement::Enabled => NmSettingWirelessPowersave::Enable,
+        }
+    }
+}
+
 #[derive(Display, EnumString, PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[repr(u32)]
 pub enum WifiBackend {
     Iwd = 0,
     WPASupplicant = 1,
+}
+
+#[derive(PartialEq, Debug, Copy, Clone, Default, TryFromPrimitive)]
+#[repr(i64)]
+enum NmSettingWirelessPowersave {
+    Default = 0,
+    Ignore = 1,
+    Disable = 2,
+    #[default]
+    Enable = 3,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+struct NmWifiSettings {
+    backend: WifiBackend,
+    powersave: NmSettingWirelessPowersave,
 }
 
 pub(crate) async fn setup_iwd_config(want_override: bool) -> std::io::Result<()> {
@@ -109,10 +136,10 @@ pub(crate) async fn setup_iwd_config(want_override: bool) -> std::io::Result<()>
     }
 }
 
-async fn restart_iwd(connection: Connection) -> Result<()> {
+async fn restart_iwd(connection: &Connection) -> Result<()> {
     // First reload systemd since we modified the config most likely
     // otherwise we wouldn't be restarting iwd.
-    daemon_reload(&connection)
+    daemon_reload(connection)
         .await
         .inspect_err(|message| error!("restart_iwd: reload systemd got an error: {message}"))?;
 
@@ -120,7 +147,8 @@ async fn restart_iwd(connection: Connection) -> Result<()> {
     let unit = SystemdUnit::new(connection, "iwd.service").await?;
     unit.restart(JobMode::Fail)
         .await
-        .inspect_err(|message| error!("restart_iwd: restart unit got an error: {message}"))
+        .inspect_err(|message| error!("restart_iwd: restart unit got an error: {message}"))?;
+    Ok(())
 }
 
 async fn stop_tracing() -> Result<()> {
@@ -165,7 +193,7 @@ pub(crate) async fn set_wifi_debug_mode(
     mode: WifiDebugMode,
     buffer_size: u32,
     should_trace: bool,
-    connection: Connection,
+    connection: &Connection,
 ) -> Result<()> {
     match get_wifi_backend().await {
         Ok(WifiBackend::Iwd) => (),
@@ -212,23 +240,145 @@ pub(crate) async fn set_wifi_debug_mode(
     Ok(())
 }
 
-pub(crate) async fn get_wifi_backend() -> Result<WifiBackend> {
+// This function re-creates the network interface if missing.
+//
+// As described in https://iwd.wiki.kernel.org/interface_lifecycle,#
+// iwd destroys and re-creates the network interface, unless configured
+// otherwise by "[DriverQuirks] DefaultInterface" or disabled by
+// default in the source (it happens for some drivers):
+// https://git.kernel.org/pub/scm/network/wireless/iwd.git/tree/src/wiphy.c?h=2.14#n88
+//
+// The original LCD model has one of the drivers in which this is
+// disabled at the source-code level, but in the OLED/Galileo model
+// with the ath11k* driver, it is not.
+//
+// NetworkManager brings up the service providing wifi.backend as
+// necessary, but this does not happen when the interface is not
+// present.  So in the OLED model, when switching from "iwd" to
+// "wpa_supplicant", "iwd" destroys the interface when stopped, NM
+// never brings up the newly configured back-end "wpa_supplicant", and
+// the system remains disconnected forever.  When switching from
+// "wpa_supplicant" to "iwd" it's all right because "wpa_supplicant"
+// doesn't destroy the network interface.  And similarly, in the LCD
+// model the interface is never destroyed, so NM always brings up the
+// service for the corresponding wifi.backend just fine.
+//
+// Unfortunately iwd does not support "config fragments" and
+// NetworkManager does not have config for this option like with
+// 'wifi.iwd.autoconnect', so the only possible way is to edit
+// '/etc/iwd/main.conf', which is not the cleanest solution.
+//
+// So, in order to work around this problem, this function re-creates
+// the network interface if missing.
+//
+// Originally discussed in:
+// https://gitlab.steamos.cloud/holo/holo/-/merge_requests/747
+async fn ensure_default_interface() -> Result<()> {
+    if !list_wifi_interfaces().await?.is_empty() {
+        return Ok(());
+    }
+    debug!("Missing wlan interace, creating it explicitly");
+    run_script(
+        "/usr/bin/iw",
+        &[
+            "phy",
+            "phy0",
+            "interface",
+            "add",
+            "wlan0",
+            "type",
+            "station",
+        ],
+    )
+    .await?;
+    for _ in 0..10 {
+        if !list_wifi_interfaces().await?.is_empty() {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    bail!("wlan0 could not be created");
+}
+
+async fn get_nm_settings() -> Result<NmWifiSettings> {
     let mut builder = ConfigBuilder::<AsyncState>::default();
     for dir in WIFI_BACKEND_PATHS {
         builder = read_config_directory(builder, path(dir), &["conf"], FileFormat::Ini).await?;
     }
     let config = builder.build().await?;
 
-    if let Some(backend) = config.get_table("device")?.remove("wifi.backend") {
-        let backend = backend.into_string()?;
-        return Ok(WifiBackend::from_str(backend.as_str())?);
+    let backend;
+    if let Some(be) = config
+        .get_table("device")
+        .ok()
+        .and_then(|mut t| t.remove("wifi.backend"))
+    {
+        let be = be.into_string()?;
+        backend = WifiBackend::from_str(be.as_str())?;
+    } else {
+        bail!("Wi-Fi backend not found in config");
     }
 
-    bail!("Wi-Fi backend not found in config");
+    let powersave;
+    if let Some(ps) = config
+        .get_table("connection")
+        .ok()
+        .and_then(|mut t| t.remove("wifi.powersave"))
+    {
+        let ps = ps.into_int()?;
+        powersave = NmSettingWirelessPowersave::try_from(ps)?;
+    } else {
+        powersave = NmSettingWirelessPowersave::default();
+    }
+
+    Ok(NmWifiSettings { powersave, backend })
 }
 
-pub(crate) async fn set_wifi_backend(backend: WifiBackend) -> Result<()> {
-    run_script("/usr/bin/steamos-wifi-set-backend", &[backend.to_string()]).await
+async fn set_nm_settings(
+    settings: NmWifiSettings,
+    restart: bool,
+    connection: &Connection,
+) -> Result<()> {
+    let NmWifiSettings { powersave, backend } = settings;
+    let powersave = powersave as i64;
+    let contents =
+        format!("[connection]\nwifi.powersave={powersave}\n[device]\nwifi.backend={backend}\n");
+    fs::write(path(WIFI_BACKEND_FILE), contents).await?;
+
+    // Stop the other backend and restart NM
+    let unit = SystemdUnit::new(connection, "NetworkManager.service").await?;
+
+    if restart {
+        let backend_unit = SystemdUnit::new(
+            connection,
+            match backend {
+                WifiBackend::Iwd => "wpa_supplicant.service",
+                WifiBackend::WPASupplicant => "iwd.service",
+            },
+        )
+        .await?;
+
+        unit.stop(JobMode::Fail).await?.wait().await?;
+        // These systemd units are not set to enabled permanently, NetworkManager will pull them as necessary
+        backend_unit.disable().await?;
+        backend_unit.stop(JobMode::Fail).await?.wait().await?;
+
+        ensure_default_interface().await?;
+        unit.start(JobMode::Fail).await?;
+    } else {
+        unit.reload(JobMode::Fail).await?.wait().await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn get_wifi_backend() -> Result<WifiBackend> {
+    Ok(get_nm_settings().await?.backend)
+}
+
+pub(crate) async fn set_wifi_backend(backend: WifiBackend, connection: &Connection) -> Result<()> {
+    let mut settings = get_nm_settings().await?;
+    settings.backend = backend;
+    set_nm_settings(settings, true, connection).await
 }
 
 pub(crate) async fn list_wifi_interfaces() -> Result<Vec<String>> {
@@ -259,8 +409,12 @@ pub(crate) async fn get_wifi_power_management_state() -> Result<WifiPowerManagem
     Ok(WifiPowerManagement::Disabled)
 }
 
-pub(crate) async fn set_wifi_power_management_state(state: WifiPowerManagement) -> Result<()> {
-    let state = match state {
+pub(crate) async fn set_wifi_power_management_state(
+    state: WifiPowerManagement,
+    connection: &Connection,
+) -> Result<()> {
+    // Manually set power management for runtime
+    let str_state = match state {
         WifiPowerManagement::Disabled => "off",
         WifiPowerManagement::Enabled => "on",
     };
@@ -268,12 +422,16 @@ pub(crate) async fn set_wifi_power_management_state(state: WifiPowerManagement) 
     for iface in list_wifi_interfaces().await? {
         run_script(
             "/usr/bin/iw",
-            &["dev", iface.as_str(), "set", "power_save", state],
+            &["dev", iface.as_str(), "set", "power_save", str_state],
         )
         .await
         .inspect_err(|message| error!("Error setting Wi-Fi power management state: {message}"))?;
     }
-    Ok(())
+
+    // ...and inform and reload NetworkManager to take care of it after suspend/wake or reboot
+    let mut settings = get_nm_settings().await?;
+    settings.powersave = state.into();
+    set_nm_settings(settings, false, connection).await
 }
 
 async fn generate_wifi_dump_inner() -> Result<PathBuf> {
@@ -340,6 +498,7 @@ pub(crate) async fn generate_wifi_dump() -> Result<PathBuf> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::systemd::test::{MockManager, MockUnit};
     use crate::{enum_on_off, enum_roundtrip, testing};
     use std::ffi::OsStr;
     use tokio::fs::{create_dir_all, read_to_string, remove_dir, try_exists, write};
@@ -393,6 +552,209 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_get_nm_settings() {
+        let _h = testing::start();
+
+        for dir in WIFI_BACKEND_PATHS {
+            create_dir_all(path(dir)).await.expect("create_dir_all");
+        }
+
+        assert!(get_nm_settings().await.is_err());
+
+        write(path(WIFI_BACKEND_PATHS[0]).join("test.conf"), "[device]")
+            .await
+            .expect("write");
+        assert!(get_nm_settings().await.is_err());
+
+        write(
+            path(WIFI_BACKEND_PATHS[0]).join("test.conf"),
+            "[device]\nwifi.backend=iwd\n",
+        )
+        .await
+        .expect("write");
+        assert_eq!(
+            get_nm_settings().await.unwrap(),
+            NmWifiSettings {
+                powersave: NmSettingWirelessPowersave::default(),
+                backend: WifiBackend::Iwd,
+            }
+        );
+
+        write(
+            path(WIFI_BACKEND_PATHS[0]).join("test.conf"),
+            "[connection]\nwifi.powersave=2\n",
+        )
+        .await
+        .expect("write");
+        assert!(get_nm_settings().await.is_err());
+
+        write(
+            path(WIFI_BACKEND_PATHS[0]).join("test.conf"),
+            "[device]\nwifi.backend=iwd\n[connection]\nwifi.powersave=2\n",
+        )
+        .await
+        .expect("write");
+        assert_eq!(
+            get_nm_settings().await.unwrap(),
+            NmWifiSettings {
+                powersave: NmSettingWirelessPowersave::try_from(2).unwrap(),
+                backend: WifiBackend::Iwd,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_nm_settings_no_restart() {
+        let mut h = testing::start();
+        let connection = h.new_dbus().await.expect("dbus");
+        connection
+            .request_name("org.freedesktop.systemd1")
+            .await
+            .expect("request_name");
+        let object_server = connection.object_server();
+        object_server
+            .at("/org/freedesktop/systemd1", MockManager::default())
+            .await
+            .expect("at");
+        object_server
+            .at(
+                "/org/freedesktop/systemd1/unit/NetworkManager_2eservice",
+                MockUnit::default(),
+            )
+            .await
+            .expect("at");
+
+        create_dir_all(path(WIFI_BACKEND_PATHS.last().unwrap()))
+            .await
+            .expect("create_dir_all");
+
+        assert!(get_nm_settings().await.is_err());
+
+        set_nm_settings(
+            NmWifiSettings {
+                backend: WifiBackend::WPASupplicant,
+                powersave: NmSettingWirelessPowersave::Disable,
+            },
+            false,
+            &connection,
+        )
+        .await
+        .unwrap();
+
+        let contents = read_to_string(path(WIFI_BACKEND_FILE)).await.unwrap();
+        assert_eq!(
+            contents,
+            "[connection]\nwifi.powersave=2\n[device]\nwifi.backend=wpa_supplicant\n"
+        );
+
+        assert_eq!(
+            get_nm_settings().await.unwrap(),
+            NmWifiSettings {
+                backend: WifiBackend::WPASupplicant,
+                powersave: NmSettingWirelessPowersave::Disable,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_nm_settings_restart() {
+        let mut h = testing::start();
+
+        let mut iwd = MockUnit::default();
+        iwd.active = String::from("active");
+        iwd.unit_file = String::from("enabled");
+
+        let mut wpa_supplicant = MockUnit::default();
+        wpa_supplicant.active = String::from("inactive");
+        wpa_supplicant.unit_file = String::from("disabled");
+
+        let connection = h.new_dbus().await.expect("dbus");
+        connection
+            .request_name("org.freedesktop.systemd1")
+            .await
+            .expect("request_name");
+        let object_server = connection.object_server();
+        object_server
+            .at("/org/freedesktop/systemd1", MockManager::default())
+            .await
+            .expect("at");
+        object_server
+            .at(
+                "/org/freedesktop/systemd1/unit/NetworkManager_2eservice",
+                MockUnit::default(),
+            )
+            .await
+            .expect("at");
+        object_server
+            .at("/org/freedesktop/systemd1/unit/iwd_2eservice", iwd)
+            .await
+            .expect("at");
+        let iwd = object_server
+            .interface::<_, MockUnit>("/org/freedesktop/systemd1/unit/iwd_2eservice")
+            .await
+            .unwrap();
+        object_server
+            .at(
+                "/org/freedesktop/systemd1/unit/wpa_supplicant_2eservice",
+                wpa_supplicant,
+            )
+            .await
+            .expect("at");
+        let wpa_supplicant = object_server
+            .interface::<_, MockUnit>("/org/freedesktop/systemd1/unit/wpa_supplicant_2eservice")
+            .await
+            .unwrap();
+
+        fn process_output(executable: &OsStr, args: &[&OsStr]) -> Result<(i32, String)> {
+            ensure!(executable.to_string_lossy() == "/usr/bin/iw", "Not iw");
+            ensure!(args[0] == "dev", "Not dev");
+            if args.len() > 2 {
+                bail!("Unknown query");
+            }
+            return Ok((0, String::from("Interface wlan0")));
+        }
+        h.test.set_process_cb(process_output).await;
+
+        create_dir_all(path(WIFI_BACKEND_PATHS.last().unwrap()))
+            .await
+            .expect("create_dir_all");
+
+        assert!(get_nm_settings().await.is_err());
+        assert_eq!(iwd.get().await.active, "active");
+        assert_eq!(iwd.get().await.unit_file, "enabled");
+        assert_eq!(wpa_supplicant.get().await.active, "inactive");
+        assert_eq!(wpa_supplicant.get().await.unit_file, "disabled");
+
+        set_nm_settings(
+            NmWifiSettings {
+                backend: WifiBackend::WPASupplicant,
+                powersave: NmSettingWirelessPowersave::Disable,
+            },
+            true,
+            &connection,
+        )
+        .await
+        .unwrap();
+
+        let contents = read_to_string(path(WIFI_BACKEND_FILE)).await.unwrap();
+        assert_eq!(
+            contents,
+            "[connection]\nwifi.powersave=2\n[device]\nwifi.backend=wpa_supplicant\n"
+        );
+
+        assert_eq!(
+            get_nm_settings().await.unwrap(),
+            NmWifiSettings {
+                backend: WifiBackend::WPASupplicant,
+                powersave: NmSettingWirelessPowersave::Disable,
+            }
+        );
+        assert_eq!(iwd.get().await.active, "inactive");
+        assert_eq!(iwd.get().await.unit_file, "disabled");
+        // wpa_supplicant is started by NetworkManager so we can't test this
+    }
+
+    #[tokio::test]
     async fn test_get_wifi_backend() {
         let _h = testing::start();
 
@@ -436,7 +798,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_power_management() {
+    async fn test_power_management_enabled() {
         let h = testing::start();
 
         fn process_output(executable: &OsStr, args: &[&OsStr]) -> Result<(i32, String)> {
@@ -449,10 +811,6 @@ mod test {
             ensure!(args[3] == "power_save", "Not power_save");
             match args[2].to_str() {
                 Some("get") => Ok((0, String::from("Power save: on"))),
-                Some("set") => {
-                    ensure!(args[4] == "on");
-                    Ok((0, String::new()))
-                }
                 _ => bail!("Unknown query"),
             }
         }
@@ -461,17 +819,6 @@ mod test {
         assert_eq!(
             get_wifi_power_management_state().await.expect("get"),
             WifiPowerManagement::Enabled
-        );
-
-        assert!(
-            set_wifi_power_management_state(WifiPowerManagement::Enabled)
-                .await
-                .is_ok()
-        );
-        assert!(
-            set_wifi_power_management_state(WifiPowerManagement::Disabled)
-                .await
-                .is_err()
         );
     }
 

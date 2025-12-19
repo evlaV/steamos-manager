@@ -91,7 +91,7 @@ impl SteamOSManager {
             should_trace: steam_deck_variant().await.unwrap_or_default()
                 == SteamDeckVariant::Galileo,
             job_manager: JobManager::new(connection.clone()).await?,
-            cpu_scheduler_manager: CpuSchedulerManager::new(connection.clone()).await?,
+            cpu_scheduler_manager: CpuSchedulerManager::new(&connection).await?,
             connection,
             channel,
             order: SerialOrderValidator::default(),
@@ -146,7 +146,7 @@ impl SteamOSManager {
             Ok(state) => state,
             Err(err) => return Err(to_zbus_fdo_error(err)),
         };
-        set_wifi_power_management_state(state)
+        set_wifi_power_management_state(state, &self.connection)
             .await
             .map_err(to_zbus_fdo_error)
     }
@@ -483,7 +483,7 @@ impl SteamOSManager {
             wanted_mode,
             buffer_size,
             self.should_trace,
-            self.connection.clone(),
+            &self.connection,
         )
         .await
         {
@@ -509,7 +509,7 @@ impl SteamOSManager {
             Ok(backend) => backend,
             Err(e) => return Err(fdo::Error::InvalidArgs(e.to_string())),
         };
-        set_wifi_backend(backend)
+        set_wifi_backend(backend, &self.connection)
             .await
             .inspect_err(|message| error!("Error setting wifi backend: {message}"))
             .map_err(to_zbus_fdo_error)
