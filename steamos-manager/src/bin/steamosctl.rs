@@ -11,12 +11,12 @@ use itertools::Itertools;
 use nix::time::{ClockId, clock_gettime};
 use std::collections::HashMap;
 use std::io::Cursor;
-use steamos_manager::audio::Mode;
+use steamos_manager::audio::Mode2;
 use steamos_manager::cec::HdmiCecState;
 use steamos_manager::hardware::{FactoryResetKind, FanControlState};
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
-    AmbientLightSensor1Proxy, Audio1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy,
+    AmbientLightSensor1Proxy, Audio2Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy,
     CpuScaling1Proxy, CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy,
     GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy,
     Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy,
@@ -45,13 +45,16 @@ enum Commands {
     /// Get luminance sensor calibration gain
     GetAlsCalibrationGain,
 
+    /// Get Audio Modes
+    GetAvailableAudioModes,
+
     /// Get Audio Mode
     GetAudioMode,
 
     /// Set Audio Mode
     SetAudioMode {
-        /// Valid options are 'mono', 'stereo'
-        mode: Mode,
+        /// Valid options are 'mono', 'auto'
+        mode: Mode2,
     },
 
     /// Set the fan control state
@@ -425,13 +428,21 @@ async fn main() -> Result<()> {
             let gains = gain.into_iter().map(|g| g.to_string()).join(", ");
             println!("ALS calibration gain: {gains}");
         }
+        Commands::GetAvailableAudioModes => {
+            let proxy = Audio2Proxy::new(&conn).await?;
+            let modes = proxy.available_modes().await?;
+            println!("Available audio modes:\n");
+            for mode in modes {
+                println!("- {mode}");
+            }
+        }
         Commands::GetAudioMode => {
-            let proxy = Audio1Proxy::new(&conn).await?;
+            let proxy = Audio2Proxy::new(&conn).await?;
             let mode = proxy.mode().await?;
             println!("Audio mode: {mode}");
         }
         Commands::SetAudioMode { mode } => {
-            let proxy = Audio1Proxy::new(&conn).await?;
+            let proxy = Audio2Proxy::new(&conn).await?;
             proxy.set_mode(mode.to_string().as_str()).await?;
         }
         Commands::SetFanControlState { state } => {
