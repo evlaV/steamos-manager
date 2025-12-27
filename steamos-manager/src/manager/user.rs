@@ -1651,14 +1651,13 @@ async fn create_device_interfaces(
         });
     }
 
-    if let Some(config) = config.performance_profile.as_ref() {
-        if !get_available_platform_profiles(&config.platform_profile_name)
+    if let Some(config) = config.performance_profile.as_ref()
+        && !get_available_platform_profiles(&config.platform_profile_name)
             .await
             .unwrap_or_default()
             .is_empty()
-        {
-            object_server.at(MANAGER_PATH, performance_profile).await?;
-        }
+    {
+        object_server.at(MANAGER_PATH, performance_profile).await?;
     }
 
     Ok(())
@@ -1821,25 +1820,16 @@ pub(crate) async fn create_interfaces(
                     e.downcast_ref::<fdo::Error>(),
                     Some(fdo::Error::UnknownObject(_))
                 ) => {}
-            Err(e) => {
-                let mut silent = false;
-                if let Some(zbus::Error::FDO(e)) = e.downcast_ref::<zbus::Error>() {
-                    if matches!(**e, fdo::Error::UnknownObject(_)) {
-                        silent = true;
-                    }
-                } else if let Some(zbus::Error::MethodError(name, _, _)) =
-                    e.downcast_ref::<zbus::Error>()
-                {
-                    if name.as_str() == "org.freedesktop.DBus.Error.UnknownObject" {
-                        silent = true;
-                    }
-                }
-                if !silent {
+            Err(e) => match e.downcast_ref::<zbus::Error>() {
+                Some(zbus::Error::FDO(e)) if matches!(**e, fdo::Error::UnknownObject(_)) => {}
+                Some(zbus::Error::MethodError(name, _, _))
+                    if name.as_str() == "org.freedesktop.DBus.Error.UnknownObject" => {}
+                _ => {
                     error!(
                         "Could not set up session management service; screen reader will not work: {e}"
                     );
                 }
-            }
+            },
         }
         object_server.at(MANAGER_PATH, session_management).await?;
     }

@@ -773,10 +773,10 @@ impl Service for TdpManagerService {
                                 match self.download_handles.entry(identifier) {
                                     Entry::Occupied(e) if e.get() == &1 => {
                                         e.remove();
-                                        if self.download_handles.is_empty() {
-                                            if let Err(e) = self.update_download_mode().await {
-                                                error!("Failed to update download mode: {e}");
-                                            }
+                                        if self.download_handles.is_empty()
+                                            && let Err(e) = self.update_download_mode().await
+                                        {
+                                            error!("Failed to update download mode: {e}");
                                         }
                                     },
                                     Entry::Occupied(mut e) => *e.get_mut() -= 1,
