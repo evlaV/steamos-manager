@@ -37,7 +37,7 @@ clippy:
     - x86_64-linux-kvm-docker
   script:
     - pacman -Sy --noconfirm --needed rust clang speech-dispatcher
-    - cargo clippy
+    - cargo clippy -- -Dwarnings
 
 proxy:
   stage: test
