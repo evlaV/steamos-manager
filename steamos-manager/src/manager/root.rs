@@ -173,7 +173,7 @@ impl SteamOSManager {
             .map_err(to_zbus_error)
     }
 
-    #[zbus(property(emits_changed_signal = "false"))]
+    #[zbus(property(emits_changed_signal = "const"))]
     async fn als_calibration_gain(&self) -> Vec<f64> {
         // Run script to get calibration value
         let mut gains = Vec::new();
@@ -183,11 +183,7 @@ impl SteamOSManager {
             _ => return Vec::new(),
         };
         for index in indices {
-            let result = script_output(
-                "/usr/bin/steamos-polkit-helpers/jupiter-get-als-gain",
-                &["-s", index],
-            )
-            .await;
+            let result = script_output("/usr/bin/dmidecode", &["--oem-string", index]).await;
             gains.push(match result {
                 Ok(as_string) => as_string.trim().parse().unwrap_or(-1.0),
                 Err(message) => {
