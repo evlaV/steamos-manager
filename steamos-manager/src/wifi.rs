@@ -84,9 +84,9 @@ pub enum WifiPowerManagement {
     Enabled = 1,
 }
 
-impl Into<NmSettingWirelessPowersave> for WifiPowerManagement {
-    fn into(self) -> NmSettingWirelessPowersave {
-        match self {
+impl From<WifiPowerManagement> for NmSettingWirelessPowersave {
+    fn from(val: WifiPowerManagement) -> NmSettingWirelessPowersave {
+        match val {
             WifiPowerManagement::Disabled => NmSettingWirelessPowersave::Disable,
             WifiPowerManagement::Enabled => NmSettingWirelessPowersave::Enable,
         }
