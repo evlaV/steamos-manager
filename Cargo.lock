@@ -1130,7 +1130,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "steamos-manager"
-version = "25.11.0"
+version = "25.12.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "steamos-manager-macros"
-version = "25.11.0"
+version = "25.12.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "steamos-manager-proxy"
-version = "25.11.0"
+version = "25.12.0"
 dependencies = [
  "zbus",
 ]
