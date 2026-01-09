@@ -14,13 +14,15 @@ use input_linux::{InputId, UInputHandle};
 #[cfg(not(test))]
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 #[cfg(test)]
-use std::collections::HashSet;
+use std::cell::Cell;
 #[cfg(test)]
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 #[cfg(not(test))]
 use std::fs::OpenOptions;
 #[cfg(not(test))]
 use std::os::fd::OwnedFd;
+#[cfg(test)]
+use std::sync::Mutex;
 use std::time::SystemTime;
 use tracing::warn;
 
@@ -28,7 +30,7 @@ pub(crate) struct UInputDevice {
     #[cfg(not(test))]
     handle: UInputHandle<OwnedFd>,
     #[cfg(test)]
-    queue: VecDeque<InputEvent>,
+    queue: Mutex<Cell<VecDeque<InputEvent>>>,
     #[cfg(test)]
     keybits: HashSet<Key>,
     name: String,
@@ -58,7 +60,7 @@ impl UInputDevice {
     #[cfg(test)]
     pub(crate) fn new() -> Result<UInputDevice> {
         Ok(UInputDevice {
-            queue: VecDeque::new(),
+            queue: Mutex::new(Cell::new(VecDeque::new())),
             keybits: HashSet::new(),
             name: String::new(),
             open: false,
@@ -108,7 +110,7 @@ impl UInputDevice {
         ))
     }
 
-    fn send_key_event(&mut self, key: Key, value: KeyState) -> Result<()> {
+    fn send_key_event(&self, key: Key, value: KeyState) -> Result<()> {
         let tv = UInputDevice::system_time().unwrap_or_else(|err| {
             warn!("System time error: {err}");
             EventTime::default()
@@ -121,20 +123,23 @@ impl UInputDevice {
         #[cfg(test)]
         {
             ensure!(self.keybits.contains(&key), "Key not in keybits");
-            self.queue.extend(&[*ev.as_ref(), *syn.as_ref()]);
+            let cell = self.queue.try_lock().unwrap();
+            let mut queue = cell.take();
+            queue.extend(&[*ev.as_ref(), *syn.as_ref()]);
+            cell.set(queue);
         }
         Ok(())
     }
 
-    pub(crate) fn key_down(&mut self, key: Key) -> Result<()> {
+    pub(crate) fn key_down(&self, key: Key) -> Result<()> {
         self.send_key_event(key, KeyState::PRESSED)
     }
 
-    pub(crate) fn key_up(&mut self, key: Key) -> Result<()> {
+    pub(crate) fn key_up(&self, key: Key) -> Result<()> {
         self.send_key_event(key, KeyState::RELEASED)
     }
 
-    pub(crate) fn key_press(&mut self, key: Key) -> Result<()> {
+    pub(crate) fn key_press(&self, key: Key) -> Result<()> {
         self.send_key_event(key, KeyState::PRESSED)?;
         self.send_key_event(key, KeyState::RELEASED)?;
         Ok(())
@@ -142,7 +147,13 @@ impl UInputDevice {
 
     #[cfg(test)]
     pub(crate) fn expect_sync(&mut self) -> Result<()> {
-        let event = self.queue.pop_front().unwrap();
+        let event;
+        {
+            let cell = self.queue.try_lock().unwrap();
+            let mut queue = cell.take();
+            event = queue.pop_front().unwrap();
+            cell.set(queue);
+        }
         ensure!(
             event.kind == EventKind::Synchronize,
             "event.kind is {:?}",
@@ -153,7 +164,13 @@ impl UInputDevice {
 
     #[cfg(test)]
     pub(crate) fn expect_key(&mut self, key: Key, state: KeyState) -> Result<()> {
-        let event = self.queue.pop_front().unwrap();
+        let event;
+        {
+            let cell = self.queue.try_lock().unwrap();
+            let mut queue = cell.take();
+            event = queue.pop_front().unwrap();
+            cell.set(queue);
+        }
         ensure!(
             event.kind == EventKind::Key,
             "event.kind is {:?}",
@@ -166,7 +183,10 @@ impl UInputDevice {
 
     #[cfg(test)]
     pub(crate) fn expect_empty(&mut self) -> Result<()> {
-        ensure!(self.queue.is_empty(), "queue not empty");
+        let cell = self.queue.try_lock().unwrap();
+        let queue = cell.take();
+        ensure!(queue.is_empty(), "queue not empty");
+        cell.set(queue);
         Ok(())
     }
 }
