@@ -132,6 +132,7 @@ The following interfaces can be implemented remotely. Others will be added in
 the future.
 
 - BatteryChargeLimit1
+- CpuBoost1
 - FactoryReset1
 - FanControl1
 - GpuPerformanceLevel1

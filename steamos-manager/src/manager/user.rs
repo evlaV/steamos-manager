@@ -48,8 +48,8 @@ use crate::power::{
     get_max_charge_level, get_platform_profile,
 };
 use crate::proxy::{
-    BatteryChargeLimit1Proxy, FactoryReset1Proxy, FanControl1Proxy, GpuPerformanceLevel1Proxy,
-    GpuPowerProfile1Proxy, PerformanceProfile1Proxy,
+    BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
+    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy,
 };
 use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
 use crate::session::{
@@ -201,6 +201,8 @@ struct RemoteInterface1 {
     #[remote]
     remote_battery_charge_limit1: Option<BatteryChargeLimit1RemoteOwner>,
     #[remote]
+    remote_cpu_boost1: Option<CpuBoost1RemoteOwner>,
+    #[remote]
     remote_factory_reset1: Option<FactoryReset1RemoteOwner>,
     #[remote]
     remote_fan_control1: Option<FanControl1RemoteOwner>,
@@ -344,7 +346,7 @@ impl BatteryChargeLimit1 {
     }
 }
 
-#[interface(name = "com.steampowered.SteamOSManager1.CpuBoost1")]
+#[remote(name = "com.steampowered.SteamOSManager1.CpuBoost1")]
 impl CpuBoost1 {
     #[zbus(property)]
     async fn cpu_boost_state(&self) -> fdo::Result<u32> {
@@ -772,6 +774,7 @@ impl RemoteInterface1 {
             session,
             system,
             remote_battery_charge_limit1: None,
+            remote_cpu_boost1: None,
             remote_factory_reset1: None,
             remote_fan_control1: None,
             remote_gpu_performance_level1: None,
