@@ -1,0 +1,28 @@
+[[device]]
+dmi.sys_vendor = "ASUSTeK COMPUTER INC."
+dmi.board_name = "RC73YA"
+device = "rog_xbox_ally"
+variant = "RC73YA"
+
+[tdp_limit]
+method = "amdgpu_hwmon"
+performance_profile = "performance"
+
+[tdp_limit.range]
+min = 4
+max = 20
+
+[gpu_performance]
+driver = "amdgpu"
+
+[gpu_power_profile]
+driver = "amdgpu"
+
+[performance_profile]
+platform_profile_name = "asus-wmi"
+suggested_default = "performance"
+
+[battery_charge_limit]
+suggested_minimum_limit = 10
+hwmon_name = "BAT1"
+attribute = "device/charge_control_end_threshold"

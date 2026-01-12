@@ -465,7 +465,7 @@ pub mod test {
         );
         assert_eq!(
             device_variant().await.unwrap(),
-            (String::from("rog_ally"), String::from("RC73YA"))
+            (String::from("rog_xbox_ally"), String::from("RC73YA"))
         );
     }
 
