@@ -2581,7 +2581,9 @@ mod test {
                 .register(
                     &<I as Interface>::name(),
                     OwnedObjectPath::try_from("/foo")?,
-                    OwnedBusName::from(BusName::Unique(new_conn.unique_name().unwrap().to_owned().into())),
+                    OwnedBusName::from(BusName::Unique(
+                        new_conn.unique_name().unwrap().to_owned().into()
+                    )),
                     Some(signal_emitter),
                     true,
                 )
