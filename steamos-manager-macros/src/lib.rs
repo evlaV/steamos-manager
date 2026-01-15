@@ -7,9 +7,9 @@
  */
 
 use proc_macro::TokenStream;
-use proc_macro2::{Group, Literal, TokenStream as TokenStream2, TokenTree};
+use proc_macro2::{Group, Literal, Span, TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, format_ident, quote};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use syn::parse::{self, Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
@@ -22,6 +22,9 @@ struct Interface {
     name: String,
     properties: Vec<Property>,
     methods: Vec<Method>,
+    register: Option<Ident>,
+    unregister: Option<Ident>,
+    context: Option<Type>,
 }
 
 #[derive(Debug)]
@@ -45,6 +48,7 @@ struct RemoteInterface {
     name: Ident,
     vars: Vec<Ident>,
     ifaces: Vec<Ident>,
+    contexts: HashSet<Ident>,
 }
 
 fn clean_return_type(ty: Type) -> Type {
@@ -141,6 +145,20 @@ fn decompose_generic<'a>(ty: &'a Type, expected: &str) -> parse::Result<&'a Type
         ));
     };
     Ok(ty)
+}
+
+fn decompose_eq(
+    mut input: impl Iterator<Item = TokenTree>,
+    span: Span,
+) -> parse::Result<TokenStream> {
+    let Some(eq) = input.next() else {
+        return Err(parse::Error::new(span, "Expected `=` following"));
+    };
+    match &eq {
+        TokenTree::Punct(eq) if eq.as_char() == '=' => (),
+        _ => return Err(parse::Error::new(eq.span(), "Expected `=`")),
+    }
+    Ok(TokenStream2::from_iter(input).into())
 }
 
 impl Parse for Interface {
@@ -264,15 +282,25 @@ impl Parse for Interface {
             name: name.to_string(),
             methods,
             properties,
+            register: None,
+            unregister: None,
+            context: None,
         })
     }
 }
 
 impl Parse for RemoteInterface {
     fn parse(input: ParseStream<'_>) -> parse::Result<RemoteInterface> {
+        enum FieldType {
+            Normal,
+            Remote,
+            Context,
+        }
+
         let iface_struct: ItemStruct = input.parse()?;
         let mut ifaces = Vec::new();
         let mut vars = Vec::new();
+        let mut contexts = HashSet::new();
 
         let Fields::Named(fields) = &iface_struct.fields else {
             return Err(Error::new(
@@ -282,46 +310,63 @@ impl Parse for RemoteInterface {
         };
 
         for field in &fields.named {
-            let mut is_remote = false;
+            let mut field_type = FieldType::Normal;
             for attr in &field.attrs {
                 let Meta::Path(path) = &attr.meta else {
                     continue;
                 };
-                if path.require_ident()? != "remote" {
-                    continue;
+                match path.require_ident() {
+                    Ok(x) if x == "remote" => field_type = FieldType::Remote,
+                    Ok(x) if x == "context" => field_type = FieldType::Context,
+                    _ => continue,
                 }
-                is_remote = true;
                 break;
             }
-            if !is_remote {
-                continue;
+            match field_type {
+                FieldType::Remote => {
+                    let Some(ident) = &field.ident else {
+                        return Err(Error::new(
+                            field.span(),
+                            "RemoteInterface requires named fields",
+                        ));
+                    };
+                    let ty = decompose_generic(&field.ty, "Option")?;
+                    let Type::Path(TypePath { path, .. }) = &ty else {
+                        return Err(Error::new(
+                            ty.span(),
+                            "RemoteInterface requires an interface Remote",
+                        ));
+                    };
+                    let iface = path.require_ident()?.to_string();
+                    let Some(iface) = iface.strip_suffix("RemoteOwner") else {
+                        return Err(Error::new(
+                            path.span(),
+                            "RemoteInterface requires an interface Remote",
+                        ));
+                    };
+                    ifaces.push(format_ident!("{iface}"));
+                    vars.push(ident.clone());
+                }
+                FieldType::Context => {
+                    let Some(ident) = &field.ident else {
+                        return Err(Error::new(
+                            field.span(),
+                            "RemoteInterface requires named fields",
+                        ));
+                    };
+                    contexts.insert(ident.clone());
+                }
+                FieldType::Normal => (),
             }
-            let Some(ident) = &field.ident else {
-                return Err(Error::new(
-                    field.span(),
-                    "RemoteInterface requires named fields",
-                ));
-            };
-            let ty = decompose_generic(&field.ty, "Option")?;
-            let Type::Path(TypePath { path, .. }) = &ty else {
-                return Err(Error::new(
-                    ty.span(),
-                    "RemoteInterface requires an interface Remote",
-                ));
-            };
-            let iface = path.require_ident()?.to_string();
-            let Some(iface) = iface.strip_suffix("RemoteOwner") else {
-                return Err(Error::new(
-                    path.span(),
-                    "RemoteInterface requires an interface Remote",
-                ));
-            };
-            ifaces.push(format_ident!("{iface}"));
-            vars.push(ident.clone());
         }
 
         let name = iface_struct.ident;
-        Ok(RemoteInterface { name, ifaces, vars })
+        Ok(RemoteInterface {
+            name,
+            ifaces,
+            vars,
+            contexts,
+        })
     }
 }
 
@@ -425,18 +470,48 @@ impl ToTokens for Interface {
             }
         };
 
+        let context = if let Some(context) = &self.context {
+            quote!(#context)
+        } else {
+            quote!(())
+        };
+
+        let register = if let Some(register) = &self.register {
+            quote! {
+                #register(&mut self.context, proxy, object_server).await?;
+            }
+        } else {
+            quote! {
+                let interface = #struct_name { proxy };
+                if !register::<#name>(object_server, interface).await? {
+                    return Ok(false);
+                }
+            }
+        };
+
+        let unregister = self.unregister.as_ref().map(|unregister| {
+            quote! {
+                async fn unregister(
+                    context: Option<&mut <#owner_name as RemoteOwner>::Context>,
+                    object_server: &ObjectServer
+                ) -> zbus::Result<()> {
+                    #unregister(context, object_server).await
+                }
+            }
+        });
+
         stream.extend(quote! {
             impl #struct_name {
                 #substream
             }
 
             #[derive(Debug)]
-            struct #struct_name {
+            pub(crate) struct #struct_name {
                 proxy: #proxy_name<'static>,
             }
 
             #[derive(Debug)]
-            struct #owner_name {
+            pub(crate) struct #owner_name {
                 session: Connection,
                 system: Connection,
                 destination: OwnedBusName,
@@ -447,15 +522,19 @@ impl ToTokens for Interface {
                 is_transient: bool,
                 #[cfg(test)]
                 ping_success: bool,
+                context: <Self as RemoteOwner>::Context,
             }
 
             impl RemoteOwner for #owner_name {
+                type Context = #context;
+
                 async fn new(
                     destination: OwnedBusName,
                     path: OwnedObjectPath,
                     session: &Connection,
                     system: &Connection,
                     is_transient: bool,
+                    context: <Self as RemoteOwner>::Context,
                 )
                 -> fdo::Result<#owner_name> {
                     let load_task = Self::load_task(
@@ -477,6 +556,7 @@ impl ToTokens for Interface {
                         registered: false,
                         #[cfg(test)]
                         ping_success: false,
+                        context,
                     })
                 }
             }
@@ -585,10 +665,8 @@ impl ToTokens for Interface {
                         .destination(self.destination.clone())?
                         .build()
                         .await?;
-                    let interface = #struct_name { proxy };
-                    if !register::<#name>(object_server, interface).await? {
-                        return Ok(false);
-                    }
+                    #register
+
                     self.registered = true;
                     Ok(true)
                 }
@@ -607,11 +685,63 @@ impl ToTokens for Interface {
                 }
             }
 
+            #[async_trait]
             impl RemoteInterface for #name {
                 type Remote = #struct_name;
                 type Owner = #owner_name;
+
+                #unregister
             }
         });
+    }
+}
+
+impl Interface {
+    fn split_attrs(&mut self, attr: TokenStream2) -> parse::Result<TokenStream2> {
+        let mut new_attrs = TokenStream2::new();
+        let mut accum = TokenStream2::new();
+        for token in attr.into_iter() {
+            match token {
+                TokenTree::Punct(x) if x.as_char() == ',' => {
+                    if let Some(attr) = self.handle_token_group(accum)? {
+                        new_attrs.extend(attr);
+                    }
+                    accum = TokenStream2::new();
+                }
+                x => accum.extend([x]),
+            }
+        }
+        if let Some(attr) = self.handle_token_group(accum)? {
+            new_attrs.extend(attr);
+        }
+        Ok(new_attrs)
+    }
+
+    fn handle_token_group(&mut self, accum: TokenStream2) -> parse::Result<Option<TokenStream2>> {
+        let mut iter = accum.into_iter();
+        let Some(token) = iter.next() else {
+            return Ok(None);
+        };
+        match token {
+            TokenTree::Ident(ident) if ident == "register" => {
+                let tokens = decompose_eq(iter, ident.span())?;
+                self.register = Some(syn::parse::<Ident>(tokens)?);
+            }
+            TokenTree::Ident(ident) if ident == "unregister" => {
+                let tokens = decompose_eq(iter, ident.span())?;
+                self.unregister = Some(syn::parse::<Ident>(tokens)?);
+            }
+            TokenTree::Ident(ident) if ident == "context" => {
+                let tokens = decompose_eq(iter, ident.span())?;
+                self.context = Some(syn::parse::<Type>(tokens)?);
+            }
+            x => {
+                let mut attr = TokenStream2::from(x);
+                attr.extend(iter);
+                return Ok(Some(attr));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -654,9 +784,11 @@ impl ToTokens for Property {
 
 #[proc_macro_attribute]
 pub fn remote(attr: TokenStream, input: TokenStream) -> TokenStream {
-    let attr: TokenStream2 = attr.into();
     let imp: TokenStream2 = input.clone().into();
-    let iface = parse_macro_input!(input as Interface);
+    let mut iface = parse_macro_input!(input as Interface);
+    let attr = iface
+        .split_attrs(attr.into())
+        .unwrap_or_else(syn::Error::into_compile_error);
 
     let out = quote! {
         #[interface(#attr)]
@@ -668,13 +800,12 @@ pub fn remote(attr: TokenStream, input: TokenStream) -> TokenStream {
     out.into()
 }
 
-#[proc_macro_derive(RemoteManager, attributes(remote))]
+#[proc_macro_derive(RemoteManager, attributes(remote, context))]
 pub fn remote_manager(input: TokenStream) -> TokenStream {
     let iface = parse_macro_input!(input as RemoteInterface);
 
     let name = &iface.name;
     let var = &iface.vars;
-    let iface = &iface.ifaces;
 
     let config_name = format_ident!("{name}Config");
     let stripped_vars: Vec<Ident> = var
@@ -686,6 +817,19 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                 .unwrap_or(var.clone())
         })
         .collect();
+    let context: Vec<TokenStream2> = stripped_vars
+        .iter()
+        .map(|var| {
+            let context = format_ident!("context_{var}");
+            if iface.contexts.contains(&context) {
+                quote!(self.#context.clone())
+            } else {
+                quote!(())
+            }
+        })
+        .collect();
+
+    let iface = &iface.ifaces;
     let iface_str: Vec<String> = iface.iter().map(ToString::to_string).collect();
 
     let tokens = quote! {
@@ -716,6 +860,7 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                                 &self.session,
                                 &self.system,
                                 is_transient,
+                                #context,
                             )
                             .await?;
                             match iface.register().await {
@@ -782,12 +927,14 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                                 )));
                             }
                         }
-                        object_server.remove::<#iface, _>(MANAGER_PATH).await?;
                         if let Some(owner) = self.#var.as_mut() {
+                            #iface::unregister(Some(&mut owner.context), object_server).await?;
                             owner.registered = false;
                             if !transient || owner.is_transient {
                                 self.#var = None;
                             }
+                        } else {
+                            #iface::unregister(None, object_server).await?;
                         }
                         self.remote_interfaces_changed(ctxt).await?;
                         Ok(true)

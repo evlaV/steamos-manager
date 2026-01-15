@@ -7,6 +7,7 @@
  */
 
 use anyhow::{Error, Result};
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,17 +40,17 @@ use crate::hardware::{
     SteamDeckVariant, device_config, device_type, device_variant, steam_deck_variant,
 };
 use crate::job::JobManagerCommand;
-use crate::manager::{RemoteInterface, RemoteInterfaceConfig, RemoteOwner};
+use crate::manager::{MANAGER_PATH, RemoteInterface, RemoteInterfaceConfig, RemoteOwner};
 use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
     CpuSchedulerManager, TdpManagerCommand, get_available_cpu_scaling_governors,
     get_available_platform_profiles, get_cpu_boost_state, get_cpu_scaling_governor,
-    get_max_charge_level, get_platform_profile,
+    get_max_charge_level, get_platform_profile, register_tdp_limit1, unregister_tdp_limit1,
 };
 use crate::proxy::{
     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
-    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy,
+    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy, TdpLimit1Proxy,
 };
 use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
 use crate::session::{
@@ -60,8 +61,6 @@ use crate::wifi::{
     WifiBackend, get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces,
 };
 use crate::{SerialOrderValidator, Service};
-
-pub(crate) const MANAGER_PATH: &str = "/com/steampowered/SteamOSManager1";
 
 macro_rules! method {
     ($self:expr, $method:expr, $($args:expr),+) => {
@@ -171,8 +170,8 @@ struct GpuPowerProfile1 {
 }
 
 pub(crate) struct TdpLimit1 {
-    manager: UnboundedSender<TdpManagerCommand>,
-    order: SerialOrderValidator,
+    pub manager: UnboundedSender<TdpManagerCommand>,
+    pub order: SerialOrderValidator,
 }
 
 struct HdmiCec1 {
@@ -212,6 +211,10 @@ struct RemoteInterface1 {
     remote_gpu_power_profile1: Option<GpuPowerProfile1RemoteOwner>,
     #[remote]
     remote_performance_profile1: Option<PerformanceProfile1RemoteOwner>,
+    #[remote]
+    remote_tdp_limit1: Option<TdpLimit1RemoteOwner>,
+    #[context]
+    context_tdp_limit1: Option<UnboundedSender<TdpManagerCommand>>,
 }
 
 struct ScreenReader0 {
@@ -780,6 +783,8 @@ impl RemoteInterface1 {
             remote_gpu_performance_level1: None,
             remote_gpu_power_profile1: None,
             remote_performance_profile1: None,
+            remote_tdp_limit1: None,
+            context_tdp_limit1: None,
         }
     }
 }
@@ -1180,7 +1185,12 @@ impl Storage1 {
     }
 }
 
-#[interface(name = "com.steampowered.SteamOSManager1.TdpLimit1")]
+#[remote(
+    name = "com.steampowered.SteamOSManager1.TdpLimit1",
+    register = register_tdp_limit1,
+    unregister = unregister_tdp_limit1,
+    context = Option<UnboundedSender<TdpManagerCommand>>,
+)]
 impl TdpLimit1 {
     #[zbus(property)]
     async fn tdp_limit(&self) -> u32 {
@@ -1658,7 +1668,7 @@ pub(crate) async fn create_interfaces(
 
     let object_server = session.object_server();
 
-    if let Err(e) = create_device_interfaces(&proxy, object_server, tdp_manager).await {
+    if let Err(e) = create_device_interfaces(&proxy, object_server, tdp_manager.clone()).await {
         error!("Failed to initalize device-specific interfaces: {e}");
     }
 
@@ -1772,6 +1782,7 @@ pub(crate) async fn create_interfaces(
             .await?;
     }
 
+    remote_interface.context_tdp_limit1 = tdp_manager;
     remote_interface.configure(&remote_config).await?;
     object_server.at(MANAGER_PATH, remote_interface).await?;
 
@@ -1800,14 +1811,13 @@ mod test {
     use crate::platform::{
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
     };
-    use crate::power::TdpLimitingMethod;
+    use crate::power::{TdpLimitingMethod, TdpManagerService};
     use crate::proxy::RemoteInterface1Proxy;
     use crate::session::{SessionManagerState, make_managed};
     use crate::systemd::test::{MockManager, MockUnit};
     use crate::{path, testing};
 
     use anyhow::{anyhow, ensure};
-    use async_trait::async_trait;
     use std::num::NonZeroU32;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -1822,6 +1832,7 @@ mod test {
         connection: Connection,
         _rx_job: UnboundedReceiver<JobManagerCommand>,
         rx_tdp: Option<UnboundedReceiver<TdpManagerCommand>>,
+        tx_tdp: Option<UnboundedSender<TdpManagerCommand>>,
         setup: S,
     }
 
@@ -1997,7 +2008,7 @@ mod test {
             connection.clone(),
             tx_ctx,
             tx_job,
-            tx_tdp,
+            tx_tdp.clone(),
         )
         .await?;
 
@@ -2020,6 +2031,7 @@ mod test {
             connection,
             _rx_job: rx_job,
             rx_tdp,
+            tx_tdp,
             setup: config.setup,
         })
     }
@@ -2545,6 +2557,7 @@ mod test {
         ensure!(test_remote_interface_missing::<I, _>(&proxy, test).await?);
 
         register_remote::<I>(&test.connection, new_conn).await?;
+        sleep(Duration::from_micros(1)).await;
 
         ensure!(!test_remote_interface_missing::<I, _>(&proxy, test).await?);
 
@@ -2709,6 +2722,10 @@ mod test {
             {
                 let mut manager = manager.get_mut().await;
                 if let Some(remote) = manager.remote_battery_charge_limit1.as_mut() {
+                    remote.ping_success = true;
+                    remote.register().await?;
+                }
+                if let Some(remote) = manager.remote_tdp_limit1.as_mut() {
                     remote.ping_success = true;
                     remote.register().await?;
                 }
@@ -2975,5 +2992,130 @@ mod test {
         proxy.set_max_charge_level(20).await.unwrap();
         assert_eq!(remote.get().await.limit, 20);
         assert_eq!(proxy.max_charge_level().await.unwrap(), 20);
+    }
+
+    #[derive(Debug)]
+    struct MockTdpLimit1 {
+        limit: u32,
+        min: u32,
+        max: u32,
+    }
+
+    #[interface(name = "com.steampowered.SteamOSManager1.TdpLimit1")]
+    impl MockTdpLimit1 {
+        #[zbus(property)]
+        async fn tdp_limit(&self) -> u32 {
+            self.limit
+        }
+
+        #[zbus(property)]
+        async fn set_tdp_limit(&mut self, limit: u32) -> fdo::Result<()> {
+            if !(self.min..=self.max).contains(&limit) {
+                return Err(fdo::Error::InvalidArgs(format!("{limit} out of range")));
+            }
+            self.limit = limit;
+            Ok(())
+        }
+
+        #[zbus(property(emits_changed_signal = "const"))]
+        async fn tdp_limit_min(&self) -> u32 {
+            self.min
+        }
+
+        #[zbus(property(emits_changed_signal = "const"))]
+        async fn tdp_limit_max(&self) -> u32 {
+            self.max
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_tdp_limit1_autoadd() {
+        let mut test = start(TestConfig::only_setup(RemoteSetup::new("TdpLimit1", 1)))
+            .await
+            .unwrap();
+
+        test.setup
+            .setup_remotes(&test.handle, &test.connection)
+            .await
+            .unwrap();
+
+        let new_conn = test.handle.new_connection().await.unwrap();
+        let proxy = RemoteInterface1Proxy::builder(&new_conn)
+            .destination(test.connection.unique_name().unwrap())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        assert!(
+            !test_remote_interface_missing::<TdpLimit1, _>(&proxy, &test)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_tdp_limit1_relay() {
+        let mut config = DeviceConfig::default();
+        config.tdp_limit = Some(TdpLimitConfig {
+            method: TdpLimitingMethod::RemoteInterface,
+            range: None,
+            download_mode_limit: None,
+            firmware_attribute: None,
+        });
+        let mut test = start(TestConfig {
+            platform: None,
+            device: Some(config),
+            setup: NopTestSetup::default(),
+        })
+        .await
+        .unwrap();
+
+        let rx_tdp = test.rx_tdp.take();
+        let mut service =
+            TdpManagerService::new(rx_tdp.unwrap(), &test.connection, &test.connection)
+                .await
+                .unwrap();
+        let service = spawn(async move { service.run().await });
+
+        let new_conn = test.handle.new_connection().await.unwrap();
+
+        let remote_iface = test
+            .connection
+            .object_server()
+            .interface::<_, RemoteInterface1>(MANAGER_PATH)
+            .await
+            .unwrap();
+        remote_iface.get_mut().await.context_tdp_limit1 = test.tx_tdp.clone();
+
+        test_remote_interface_added::<TdpLimit1, _>(&test, &new_conn)
+            .await
+            .unwrap();
+
+        let proxy = TdpLimit1Proxy::builder(&new_conn)
+            .destination(test.connection.unique_name().unwrap())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        let remote = MockTdpLimit1 {
+            limit: 10,
+            min: 3,
+            max: 15,
+        };
+        let object_server = new_conn.object_server();
+        object_server.at("/foo", remote).await.unwrap();
+        let remote = object_server
+            .interface::<_, MockTdpLimit1>("/foo")
+            .await
+            .unwrap();
+        assert_eq!(proxy.tdp_limit().await.unwrap(), 10);
+        assert_eq!(proxy.tdp_limit_min().await.unwrap(), 3);
+        assert_eq!(proxy.tdp_limit_max().await.unwrap(), 15);
+        proxy.set_tdp_limit(12).await.unwrap();
+        assert_eq!(remote.get().await.limit, 12);
+
+        service.abort();
     }
 }

@@ -138,3 +138,4 @@ the future.
 - GpuPerformanceLevel1
 - GpuPowerProfile1
 - PerformanceProfile1
+- TdpLimit1

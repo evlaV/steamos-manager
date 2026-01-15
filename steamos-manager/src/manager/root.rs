@@ -76,7 +76,7 @@ impl SteamOSManager {
         Ok(SteamOSManager {
             fan_control: FanControl::new(connection.clone()),
             wifi_debug_mode: WifiDebugMode::Off,
-            tdp_limit_manager: tdp_limit_manager()
+            tdp_limit_manager: tdp_limit_manager(&connection)
                 .await
                 .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
                 .ok(),

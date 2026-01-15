@@ -19,20 +19,24 @@ use strum::{Display, EnumIter, EnumString, VariantNames};
 use tokio::fs::{self, File, try_exists};
 use tokio::io::{AsyncWriteExt, Interest};
 use tokio::net::unix::pipe;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
-use zbus::Connection;
+use zbus::names::OwnedBusName;
+use zbus::zvariant::OwnedObjectPath;
+use zbus::{Connection, ObjectServer, fdo};
 
-use crate::Service;
+use crate::error::{to_zbus_error, to_zbus_fdo_error};
 use crate::gpu::AMDGPU_HWMON_NAME;
 use crate::hardware::device_config;
+use crate::manager::MANAGER_PATH;
 use crate::manager::root::RootManagerProxy;
-use crate::manager::user::{MANAGER_PATH, TdpLimit1};
+use crate::manager::user::TdpLimit1;
+use crate::proxy::TdpLimit1Proxy;
 use crate::sysfs::{SysfsWritten, find_sysdir, sysfs_queued_write};
 use crate::systemd::{EnableState, JobMode, SystemdUnit};
-use crate::{path, write_synced};
+use crate::{SerialOrderValidator, Service, path, write_synced};
 
 #[cfg(not(test))]
 const HWMON_PREFIX: &str = "/sys/class/hwmon";
@@ -110,6 +114,7 @@ pub enum CPUBoostState {
 pub enum TdpLimitingMethod {
     AmdgpuHwmon,
     FirmwareAttribute,
+    RemoteInterface,
 }
 
 #[derive(Debug)]
@@ -121,17 +126,32 @@ pub(crate) struct FirmwareAttributeLimitManager {
     performance_profile: Option<String>,
 }
 
+#[derive(Debug)]
+pub(crate) struct RemoteInterfaceLimitManager<'proxy> {
+    connection: Connection,
+    proxy: Option<TdpLimit1Proxy<'proxy>>,
+}
+
 #[async_trait]
 pub(crate) trait TdpLimitManager: Send + Sync {
     async fn get_tdp_limit(&self) -> Result<u32>;
     async fn set_tdp_limit(&self, limit: u32) -> Result<()>;
     async fn get_tdp_limit_range(&self) -> Result<RangeInclusive<u32>>;
+
     async fn is_active(&self) -> Result<bool> {
         Ok(true)
     }
+
+    fn needs_root(&self) -> bool {
+        true
+    }
+
+    async fn set_proxy(&mut self, _proxy: Option<(OwnedBusName, OwnedObjectPath)>) -> Result<()> {
+        Ok(())
+    }
 }
 
-pub(crate) async fn tdp_limit_manager() -> Result<Box<dyn TdpLimitManager>> {
+pub(crate) async fn tdp_limit_manager(system: &Connection) -> Result<Box<dyn TdpLimitManager>> {
     let config = device_config().await?;
     let config = config
         .as_ref()
@@ -149,6 +169,10 @@ pub(crate) async fn tdp_limit_manager() -> Result<Box<dyn TdpLimitManager>> {
             })
         }
         TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {}),
+        TdpLimitingMethod::RemoteInterface => Box::new(RemoteInterfaceLimitManager {
+            connection: system.clone(),
+            proxy: None,
+        }),
     })
 }
 
@@ -163,6 +187,7 @@ pub(crate) struct TdpManagerService {
     manager: Box<dyn TdpLimitManager>,
 }
 
+#[derive(Debug)]
 pub(crate) enum TdpManagerCommand {
     SetTdpLimit(u32),
     GetTdpLimit(oneshot::Sender<Result<u32>>),
@@ -171,6 +196,10 @@ pub(crate) enum TdpManagerCommand {
     UpdateDownloadMode,
     EnterDownloadMode(String, oneshot::Sender<Result<Option<OwnedFd>>>),
     ListDownloadModeHandles(oneshot::Sender<HashMap<String, u32>>),
+    SetProxy(
+        Option<(OwnedBusName, OwnedObjectPath)>,
+        oneshot::Sender<Result<()>>,
+    ),
 }
 
 async fn read_cpu_sysfs_contents<S: AsRef<Path>>(suffix: S) -> Result<String> {
@@ -533,6 +562,58 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
     }
 }
 
+#[async_trait]
+impl<'proxy> TdpLimitManager for RemoteInterfaceLimitManager<'proxy> {
+    async fn get_tdp_limit(&self) -> Result<u32> {
+        let proxy = self
+            .proxy
+            .as_ref()
+            .ok_or(anyhow!("No remote TDP manager"))?;
+        Ok(proxy.tdp_limit().await?)
+    }
+
+    async fn set_tdp_limit(&self, limit: u32) -> Result<()> {
+        let proxy = self
+            .proxy
+            .as_ref()
+            .ok_or(anyhow!("No remote TDP manager"))?;
+        Ok(proxy.set_tdp_limit(limit).await?)
+    }
+
+    async fn get_tdp_limit_range(&self) -> Result<RangeInclusive<u32>> {
+        let proxy = self
+            .proxy
+            .as_ref()
+            .ok_or(anyhow!("No remote TDP manager"))?;
+        let min = proxy.tdp_limit_min().await?;
+        let max = proxy.tdp_limit_max().await?;
+        Ok(min..=max)
+    }
+
+    async fn is_active(&self) -> Result<bool> {
+        Ok(self.proxy.is_some())
+    }
+
+    fn needs_root(&self) -> bool {
+        false
+    }
+
+    async fn set_proxy(&mut self, proxy: Option<(OwnedBusName, OwnedObjectPath)>) -> Result<()> {
+        self.proxy = if let Some((destination, path)) = proxy {
+            Some(
+                TdpLimit1Proxy::builder(&self.connection)
+                    .path(path)?
+                    .destination(destination)?
+                    .build()
+                    .await?,
+            )
+        } else {
+            None
+        };
+        Ok(())
+    }
+}
+
 pub(crate) async fn get_max_charge_level() -> Result<i32> {
     let config = device_config().await?;
     let config = config
@@ -593,6 +674,51 @@ pub(crate) async fn set_platform_profile(name: &str, profile: &str) -> Result<()
         .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
 }
 
+pub(crate) async fn register_tdp_limit1(
+    ctx: &mut Option<UnboundedSender<TdpManagerCommand>>,
+    proxy: TdpLimit1Proxy<'_>,
+    object_server: &ObjectServer,
+) -> fdo::Result<()> {
+    let Some(sender) = ctx else {
+        return Ok(());
+    };
+
+    let proxy = proxy.inner();
+    let destination = proxy.destination().clone().into();
+    let path = proxy.path().clone().into();
+    let (tx, rx) = oneshot::channel();
+    sender
+        .send(TdpManagerCommand::SetProxy(Some((destination, path)), tx))
+        .map_err(|_| fdo::Error::Failed(String::from("TDP manager exited prematurely")))?;
+    rx.await
+        .map_err(to_zbus_fdo_error)?
+        .map_err(to_zbus_fdo_error)?;
+
+    let tdp_limit = TdpLimit1 {
+        manager: sender.clone(),
+        order: SerialOrderValidator::default(),
+    };
+    object_server.at(MANAGER_PATH, tdp_limit).await?;
+    Ok(())
+}
+
+pub(crate) async fn unregister_tdp_limit1(
+    ctx: Option<&mut Option<UnboundedSender<TdpManagerCommand>>>,
+    object_server: &ObjectServer,
+) -> zbus::Result<()> {
+    object_server.remove::<TdpLimit1, _>(MANAGER_PATH).await?;
+
+    let Some(Some(sender)) = ctx else {
+        return Ok(());
+    };
+
+    let (tx, rx) = oneshot::channel();
+    sender
+        .send(TdpManagerCommand::SetProxy(None, tx))
+        .map_err(|_| zbus::Error::Failure(String::from("TDP manager exited prematurely")))?;
+    rx.await.map_err(to_zbus_error)?.map_err(to_zbus_error)
+}
+
 impl TdpManagerService {
     pub async fn new(
         channel: UnboundedReceiver<TdpManagerCommand>,
@@ -605,7 +731,7 @@ impl TdpManagerService {
             .and_then(|config| config.tdp_limit.as_ref())
             .ok_or(anyhow!("No TDP limit configured"))?;
 
-        let manager = tdp_limit_manager().await?;
+        let manager = tdp_limit_manager(system).await?;
         let proxy = RootManagerProxy::new(system).await?;
 
         Ok(TdpManagerService {
@@ -695,10 +821,14 @@ impl TdpManagerService {
     }
 
     async fn set_tdp_limit(&self, limit: u32) -> Result<()> {
-        self.proxy
-            .set_tdp_limit(limit)
-            .await
-            .inspect_err(|e| error!("Failed to set TDP limit: {e}"))?;
+        if self.manager.needs_root() {
+            self.proxy
+                .set_tdp_limit(limit)
+                .await
+                .inspect_err(|e| error!("Failed to set TDP limit: {e}"))?;
+        } else {
+            self.manager.set_tdp_limit(limit).await?;
+        }
 
         let object_server = self.session.object_server().clone();
         tokio::spawn(async move {
@@ -735,6 +865,9 @@ impl TdpManagerService {
             }
             TdpManagerCommand::ListDownloadModeHandles(reply) => {
                 let _ = reply.send(self.download_handles.clone());
+            }
+            TdpManagerCommand::SetProxy(proxy, reply) => {
+                let _ = reply.send(self.manager.set_proxy(proxy).await);
             }
         }
         Ok(())
@@ -795,7 +928,6 @@ impl Service for TdpManagerService {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::error::to_zbus_fdo_error;
     use crate::hardware::{
         BatteryChargeLimitConfig, DeviceConfig, FirmwareAttributeConfig, PerformanceProfileConfig,
         RangeConfig, TdpLimitConfig,
@@ -862,7 +994,8 @@ pub(crate) mod test {
 
     #[tokio::test]
     async fn test_gpu_hwmon_get_tdp_limit() {
-        let handle = testing::start();
+        let mut handle = testing::start();
+        let connection = handle.new_dbus().await.expect("new_dbus");
 
         let mut config = DeviceConfig::default();
         config.tdp_limit = Some(TdpLimitConfig {
@@ -872,7 +1005,7 @@ pub(crate) mod test {
             firmware_attribute: None,
         });
         handle.test.set_device_config(config).await;
-        let manager = tdp_limit_manager().await.unwrap();
+        let manager = tdp_limit_manager(&connection).await.unwrap();
 
         setup().await.expect("setup");
         let hwmon = path(HWMON_PREFIX);
@@ -887,7 +1020,8 @@ pub(crate) mod test {
 
     #[tokio::test]
     async fn test_gpu_hwmon_set_tdp_limit() {
-        let handle = testing::start();
+        let mut handle = testing::start();
+        let connection = handle.new_dbus().await.expect("new_dbus");
 
         let mut config = DeviceConfig::default();
         config.tdp_limit = Some(TdpLimitConfig {
@@ -897,7 +1031,7 @@ pub(crate) mod test {
             firmware_attribute: None,
         });
         handle.test.set_device_config(config).await;
-        let manager = tdp_limit_manager().await.unwrap();
+        let manager = tdp_limit_manager(&connection).await.unwrap();
 
         assert_eq!(
             manager.set_tdp_limit(2).await.unwrap_err().to_string(),
@@ -1246,7 +1380,7 @@ pub(crate) mod test {
             firmware_attribute: None,
         });
         h.test.set_device_config(config).await;
-        let manager = tdp_limit_manager().await.unwrap();
+        let manager = tdp_limit_manager(&connection).await.unwrap();
 
         connection
             .request_name("com.steampowered.SteamOSManager1")
@@ -1342,7 +1476,7 @@ pub(crate) mod test {
             firmware_attribute: None,
         });
         h.test.set_device_config(config).await;
-        let manager = tdp_limit_manager().await.unwrap();
+        let manager = tdp_limit_manager(&connection).await.unwrap();
 
         connection
             .request_name("com.steampowered.SteamOSManager1")
@@ -1393,9 +1527,10 @@ pub(crate) mod test {
 
     #[tokio::test]
     async fn test_firmware_attribute_tdp_limiter() {
-        let h = testing::start();
+        let mut h = testing::start();
         setup().await.expect("setup");
 
+        let connection = h.new_dbus().await.expect("new_dbus");
         let mut config = DeviceConfig::default();
         config.performance_profile = Some(PerformanceProfileConfig {
             platform_profile_name: String::from("platform-profile0"),
@@ -1453,7 +1588,7 @@ pub(crate) mod test {
             .await
             .unwrap();
 
-        let manager = tdp_limit_manager().await.unwrap();
+        let manager = tdp_limit_manager(&connection).await.unwrap();
 
         assert_eq!(manager.is_active().await.unwrap(), true);
         assert_eq!(manager.get_tdp_limit().await.unwrap(), 10);
@@ -1515,9 +1650,10 @@ pub(crate) mod test {
 
     #[tokio::test]
     async fn test_firmware_attribute_tdp_limiter_no_profile() {
-        let h = testing::start();
+        let mut h = testing::start();
         setup().await.expect("setup");
 
+        let connection = h.new_dbus().await.expect("new_dbus");
         let mut config = DeviceConfig::default();
         config.tdp_limit = Some(TdpLimitConfig {
             method: TdpLimitingMethod::FirmwareAttribute,
@@ -1562,7 +1698,7 @@ pub(crate) mod test {
             .await
             .unwrap();
 
-        let manager = tdp_limit_manager().await.unwrap();
+        let manager = tdp_limit_manager(&connection).await.unwrap();
 
         assert_eq!(manager.is_active().await.unwrap(), true);
         assert_eq!(manager.get_tdp_limit().await.unwrap(), 10);
