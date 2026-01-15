@@ -370,8 +370,8 @@ impl ToTokens for Interface {
                 }
 
                 async fn signal_task_impl(
-                    destination: BusName<'static>,
-                    path: ObjectPath<'static>,
+                    destination: OwnedBusName,
+                    path: OwnedObjectPath,
                     session: Connection,
                     system: Connection,
                     tx1: oneshot::Sender<()>,
@@ -410,8 +410,8 @@ impl ToTokens for Interface {
                 }
 
                 async fn signal_task(
-                    destination: BusName<'static>,
-                    path: ObjectPath<'static>,
+                    destination: OwnedBusName,
+                    path: OwnedObjectPath,
                     session: Connection,
                     system: Connection,
                 ) -> Result<JoinHandle<Result<()>>> {
@@ -439,8 +439,8 @@ impl ToTokens for Interface {
             struct #owner_name {
                 session: Connection,
                 system: Connection,
-                destination: BusName<'static>,
-                path: ObjectPath<'static>,
+                destination: OwnedBusName,
+                path: OwnedObjectPath,
                 load_task: JoinHandle<anyhow::Result<()>>,
                 signal_task: Option<JoinHandle<anyhow::Result<()>>>,
                 registered: bool,
@@ -450,16 +450,14 @@ impl ToTokens for Interface {
             }
 
             impl RemoteOwner for #owner_name {
-                async fn new<'a, 'b>(
-                    destination: &BusName<'a>,
-                    path: ObjectPath<'b>,
+                async fn new(
+                    destination: OwnedBusName,
+                    path: OwnedObjectPath,
                     session: &Connection,
                     system: &Connection,
                     is_transient: bool,
                 )
                 -> fdo::Result<#owner_name> {
-                    let destination = destination.to_owned();
-                    let path = path.to_owned();
                     let load_task = Self::load_task(
                         destination.clone(),
                         path.clone(),
@@ -485,8 +483,8 @@ impl ToTokens for Interface {
 
             impl #owner_name {
                 async fn load_task_impl(
-                    destination: BusName<'static>,
-                    path: ObjectPath<'static>,
+                    destination: OwnedBusName,
+                    path: OwnedObjectPath,
                     session: Connection,
                     system: Connection,
                     tx1: oneshot::Sender<()>,
@@ -542,8 +540,8 @@ impl ToTokens for Interface {
                 }
 
                 async fn load_task(
-                    destination: BusName<'static>,
-                    path: ObjectPath<'static>,
+                    destination: OwnedBusName,
+                    path: OwnedObjectPath,
                     session: Connection,
                     system: Connection,
                 ) -> Result<JoinHandle<Result<()>>> {
@@ -583,8 +581,8 @@ impl ToTokens for Interface {
 
                     let object_server = self.session.object_server();
                     let proxy = #proxy_name::builder(&self.system)
-                        .path(&self.path)?
-                        .destination(&self.destination)?
+                        .path(self.path.clone())?
+                        .destination(self.destination.clone())?
                         .build()
                         .await?;
                     let interface = #struct_name { proxy };
@@ -596,7 +594,7 @@ impl ToTokens for Interface {
                 }
 
                 fn remote(&self) -> &BusName<'_> {
-                    &self.destination
+                    self.destination.inner()
                 }
             }
 
@@ -695,13 +693,12 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
             async fn register(
                 &mut self,
                 name: &str,
-                object: ObjectPath<'_>,
-                bus_name: &BusName<'_>,
+                object: OwnedObjectPath,
+                bus_name: OwnedBusName,
                 ctxt: Option<&SignalEmitter<'_>>,
                 is_transient: bool,
             ) -> fdo::Result<bool> {
                 let object_server = self.session.object_server();
-                let object = object.to_owned();
                 tracing::debug!("Registering interface {name} at {object} {bus_name}, transient: {is_transient}");
 
                 match name {
@@ -714,7 +711,7 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                             }
                         } else {
                             let mut iface = <#iface as RemoteInterface>::Owner::new(
-                                &bus_name,
+                                bus_name,
                                 object,
                                 &self.session,
                                 &self.system,
@@ -816,11 +813,12 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                 &mut self,
                 config: &#config_name,
             ) -> Result<()> {
+                use zbus::names::WellKnownName;
                 #(if let Some(config) = &config.#stripped_vars {
                     self.register(
                         #iface::name().as_str(),
-                        config.object_path.as_ref(),
-                        &BusName::WellKnown(config.bus_name.to_owned().into_inner()),
+                        config.object_path.clone(),
+                        BusName::WellKnown(WellKnownName::from(config.bus_name.clone())).into(),
                         None,
                         false,
                     ).await?;

@@ -6,18 +6,18 @@
  */
 
 use serde::Deserialize;
-use zbus::names::{BusName, OwnedWellKnownName};
+use zbus::names::{OwnedBusName, OwnedWellKnownName};
 use zbus::object_server::Interface;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, fdo};
 
 pub(crate) mod root;
 pub(crate) mod user;
 
 pub(crate) trait RemoteOwner: Sized {
-    async fn new<'a, 'b>(
-        destination: &BusName<'a>,
-        path: ObjectPath<'b>,
+    async fn new(
+        destination: OwnedBusName,
+        path: OwnedObjectPath,
         session: &Connection,
         system: &Connection,
         is_transient: bool,

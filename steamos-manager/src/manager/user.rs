@@ -18,10 +18,10 @@ use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 use zbus::fdo::{self, DBusProxy};
 use zbus::message::Header;
-use zbus::names::{BusName, UniqueName};
+use zbus::names::{BusName, OwnedBusName, UniqueName};
 use zbus::object_server::{Interface, SignalEmitter};
 use zbus::proxy::{Builder, CacheProperties};
-use zbus::zvariant::{Fd, ObjectPath};
+use zbus::zvariant::{Fd, OwnedObjectPath};
 use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 
 use steamos_manager_macros::{RemoteManager, remote};
@@ -2580,8 +2580,8 @@ mod test {
                 .await
                 .register(
                     &<I as Interface>::name(),
-                    ObjectPath::try_from("/foo")?,
-                    &BusName::Unique(new_conn.unique_name().unwrap().to_owned().into()),
+                    OwnedObjectPath::try_from("/foo")?,
+                    OwnedBusName::from(BusName::Unique(new_conn.unique_name().unwrap().to_owned().into())),
                     Some(signal_emitter),
                     true,
                 )
