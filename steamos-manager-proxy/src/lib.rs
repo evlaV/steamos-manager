@@ -9,10 +9,6 @@
 
 // Re-export relevant proxies
 
-// Deprecated interface
-mod manager;
-pub use crate::manager::ManagerProxy;
-
 // Optional interfaces
 mod ambient_light_sensor1;
 mod audio1;

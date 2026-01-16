@@ -44,7 +44,7 @@ use crate::wifi::{
     WifiBackend, WifiDebugMode, WifiPowerManagement, extract_wifi_trace, generate_wifi_dump,
     set_wifi_backend, set_wifi_debug_mode, set_wifi_power_management_state,
 };
-use crate::{API_VERSION, SerialOrderValidator, path};
+use crate::{SerialOrderValidator, path};
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 #[repr(u32)]
@@ -625,12 +625,6 @@ impl SteamOSManager {
     async fn clean_temporary_sessions(&self) -> fdo::Result<()> {
         clean_temporary_sessions().await.map_err(to_zbus_fdo_error)
     }
-
-    /// A version property.
-    #[zbus(property(emits_changed_signal = "const"))]
-    async fn version(&self) -> u32 {
-        API_VERSION
-    }
 }
 
 #[cfg(test)]
@@ -894,27 +888,6 @@ mod test {
 
         proxy.set_manual_gpu_clock(200).await.expect("proxy_set");
         assert_eq!(read_clocks().await.unwrap(), format_clocks(200));
-
-        test.connection.close().await.unwrap();
-    }
-
-    #[zbus::proxy(
-        interface = "com.steampowered.SteamOSManager1.RootManager",
-        default_path = "/com/steampowered/SteamOSManager1"
-    )]
-    trait Version {
-        #[zbus(property)]
-        fn version(&self) -> zbus::Result<u32>;
-    }
-
-    #[tokio::test]
-    async fn version() {
-        let test = start().await.expect("start");
-        let name = test.connection.unique_name().unwrap();
-        let proxy = VersionProxy::new(&test.connection, name.clone())
-            .await
-            .unwrap();
-        assert_eq!(proxy.version().await, Ok(API_VERSION));
 
         test.connection.close().await.unwrap();
     }

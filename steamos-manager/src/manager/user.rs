@@ -59,7 +59,7 @@ use crate::session::{
 use crate::wifi::{
     WifiBackend, get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces,
 };
-use crate::{API_VERSION, SerialOrderValidator, Service};
+use crate::{SerialOrderValidator, Service};
 
 pub(crate) const MANAGER_PATH: &str = "/com/steampowered/SteamOSManager1";
 
@@ -121,11 +121,6 @@ macro_rules! setter {
             .await
             .map_err(|e| zbus::Error::FDO(Box::new(e)))
     };
-}
-
-struct SteamOSManager {
-    proxy: Proxy<'static>,
-    _job_manager: UnboundedSender<JobManagerCommand>,
 }
 
 struct AudioManager1 {
@@ -269,71 +264,6 @@ pub(crate) struct SignalRelayService {
 pub(crate) struct ScreenReaderSetupService {
     session: Connection,
     channel: broadcast::Receiver<SessionManagerMessage>,
-}
-
-impl SteamOSManager {
-    pub async fn new(
-        system_conn: Connection,
-        proxy: Proxy<'static>,
-        job_manager: UnboundedSender<JobManagerCommand>,
-    ) -> Result<Self> {
-        job_manager.send(JobManagerCommand::MirrorConnection(system_conn))?;
-        Ok(SteamOSManager {
-            proxy,
-            // Hold onto extra sender to make sure the channel isn't dropped
-            // early on devices we don't have any interfaces that use job control.
-            _job_manager: job_manager,
-        })
-    }
-}
-
-#[interface(name = "com.steampowered.SteamOSManager1.Manager")]
-impl SteamOSManager {
-    #[zbus(property(emits_changed_signal = "const"))]
-    async fn version(&self) -> u32 {
-        API_VERSION
-    }
-
-    #[zbus(property(emits_changed_signal = "const"))]
-    async fn tdp_limit_min(&self) -> u32 {
-        0
-    }
-
-    #[zbus(property)]
-    async fn wifi_debug_mode_state(&self) -> fdo::Result<u32> {
-        getter!(self, "WifiDebugModeState")
-    }
-
-    async fn set_wifi_debug_mode(
-        &self,
-        mode: u32,
-        buffer_size: u32,
-        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
-    ) -> fdo::Result<()> {
-        let _: () = method!(self, "SetWifiDebugMode", mode, buffer_size)?;
-        self.wifi_debug_mode_state_changed(&ctx)
-            .await
-            .map_err(zbus_to_zbus_fdo)?;
-        Ok(())
-    }
-
-    #[zbus(property)]
-    async fn wifi_backend(&self) -> fdo::Result<u32> {
-        match get_wifi_backend().await {
-            Ok(backend) => Ok(backend as u32),
-            Err(e) => Err(to_zbus_fdo_error(e)),
-        }
-    }
-
-    #[zbus(property)]
-    async fn set_wifi_backend(
-        &self,
-        backend: u32,
-        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
-    ) -> zbus::Result<()> {
-        let _: () = self.proxy.call("SetWifiBackend", &(backend)).await?;
-        self.wifi_backend_changed(&ctx).await
-    }
 }
 
 impl AudioManager1 {
@@ -1682,7 +1612,7 @@ pub(crate) async fn create_interfaces(
         .build()
         .await?;
 
-    let manager = SteamOSManager::new(system.clone(), proxy.clone(), job_manager.clone()).await?;
+    job_manager.send(JobManagerCommand::MirrorConnection(system.clone()))?;
 
     let audio_manager = AudioManager1::new().await?;
     let als = AmbientLightSensor1 {
@@ -1724,7 +1654,6 @@ pub(crate) async fn create_interfaces(
     };
 
     let object_server = session.object_server();
-    object_server.at(MANAGER_PATH, manager).await?;
 
     if let Err(e) = create_device_interfaces(&proxy, object_server, tdp_manager).await {
         error!("Failed to initalize device-specific interfaces: {e}");
@@ -2090,25 +2019,6 @@ mod test {
             rx_tdp,
             setup: config.setup,
         })
-    }
-
-    #[tokio::test]
-    async fn interface_matches() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        let remote = testing::InterfaceIntrospection::from_remote::<SteamOSManager, _>(
-            &test.connection,
-            MANAGER_PATH,
-        )
-        .await
-        .expect("remote");
-        let local = testing::InterfaceIntrospection::from_local(
-            "../data/interfaces/com.steampowered.SteamOSManager1.Manager.xml",
-            "com.steampowered.SteamOSManager1.Manager",
-        )
-        .await
-        .expect("local");
-        assert!(remote.compare(&local));
     }
 
     async fn test_interface_matches<I: Interface>(connection: &Connection) -> Result<bool> {

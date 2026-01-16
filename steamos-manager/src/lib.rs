@@ -51,8 +51,6 @@ pub mod wifi;
 #[cfg(test)]
 mod testing;
 
-const API_VERSION: u32 = 9;
-
 pub trait Service
 where
     Self: Sized + Send,
