@@ -50,7 +50,8 @@ use crate::power::{
 };
 use crate::proxy::{
     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
-    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy, TdpLimit1Proxy,
+    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy, Storage1Proxy,
+    TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
 };
 use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
 use crate::session::{
@@ -196,6 +197,7 @@ struct PerformanceProfile1 {
 struct RemoteInterface1 {
     session: Connection,
     system: Connection,
+    job_manager: UnboundedSender<JobManagerCommand>,
 
     #[remote]
     remote_battery_charge_limit1: Option<BatteryChargeLimit1RemoteOwner>,
@@ -212,9 +214,15 @@ struct RemoteInterface1 {
     #[remote]
     remote_performance_profile1: Option<PerformanceProfile1RemoteOwner>,
     #[remote]
+    remote_storage1: Option<Storage1RemoteOwner>,
+    #[remote]
     remote_tdp_limit1: Option<TdpLimit1RemoteOwner>,
     #[context]
     context_tdp_limit1: Option<UnboundedSender<TdpManagerCommand>>,
+    #[remote]
+    remote_update_bios1: Option<UpdateBios1RemoteOwner>,
+    #[remote]
+    remote_update_deck1: Option<UpdateDock1RemoteOwner>,
 }
 
 struct ScreenReader0 {
@@ -772,10 +780,15 @@ impl PerformanceProfile1 {
 }
 
 impl RemoteInterface1 {
-    fn new(session: Connection, system: Connection) -> RemoteInterface1 {
+    fn new(
+        session: Connection,
+        system: Connection,
+        job_manager: UnboundedSender<JobManagerCommand>,
+    ) -> RemoteInterface1 {
         RemoteInterface1 {
             session,
             system,
+            job_manager,
             remote_battery_charge_limit1: None,
             remote_cpu_boost1: None,
             remote_factory_reset1: None,
@@ -783,8 +796,11 @@ impl RemoteInterface1 {
             remote_gpu_performance_level1: None,
             remote_gpu_power_profile1: None,
             remote_performance_profile1: None,
+            remote_storage1: None,
             remote_tdp_limit1: None,
             context_tdp_limit1: None,
+            remote_update_bios1: None,
+            remote_update_deck1: None,
         }
     }
 }
@@ -1169,18 +1185,18 @@ impl SessionManagement1 {
     }
 }
 
-#[interface(name = "com.steampowered.SteamOSManager1.Storage1")]
+#[remote(name = "com.steampowered.SteamOSManager1.Storage1")]
 impl Storage1 {
     async fn format_device(
         &mut self,
         device: &str,
         label: &str,
         validate: bool,
-    ) -> fdo::Result<zvariant::OwnedObjectPath> {
+    ) -> fdo::Result<OwnedObjectPath> {
         job_method!(self, "FormatDevice", device, label, validate)
     }
 
-    async fn trim_devices(&mut self) -> fdo::Result<zvariant::OwnedObjectPath> {
+    async fn trim_devices(&mut self) -> fdo::Result<OwnedObjectPath> {
         job_method!(self, "TrimDevices")
     }
 }
@@ -1258,16 +1274,16 @@ impl TdpLimit1 {
     }
 }
 
-#[interface(name = "com.steampowered.SteamOSManager1.UpdateBios1")]
+#[remote(name = "com.steampowered.SteamOSManager1.UpdateBios1")]
 impl UpdateBios1 {
-    async fn update_bios(&mut self) -> fdo::Result<zvariant::OwnedObjectPath> {
+    async fn update_bios(&mut self) -> fdo::Result<OwnedObjectPath> {
         job_method!(self, "UpdateBios")
     }
 }
 
-#[interface(name = "com.steampowered.SteamOSManager1.UpdateDock1")]
+#[remote(name = "com.steampowered.SteamOSManager1.UpdateDock1")]
 impl UpdateDock1 {
-    async fn update_dock(&mut self) -> fdo::Result<zvariant::OwnedObjectPath> {
+    async fn update_dock(&mut self) -> fdo::Result<OwnedObjectPath> {
         job_method!(self, "UpdateDock")
     }
 }
@@ -1652,7 +1668,8 @@ pub(crate) async fn create_interfaces(
         channel: daemon.clone(),
     };
 
-    let mut remote_interface = RemoteInterface1::new(session.clone(), system.clone());
+    let mut remote_interface =
+        RemoteInterface1::new(session.clone(), system.clone(), job_manager.clone());
     let remote_config = RemoteInterface1Config::load().await?;
 
     let session_management = SessionManagement1 {
@@ -1817,7 +1834,7 @@ mod test {
     use crate::systemd::test::{MockManager, MockUnit};
     use crate::{path, testing};
 
-    use anyhow::{anyhow, ensure};
+    use anyhow::{anyhow, bail, ensure};
     use std::num::{NonZero, NonZeroU32};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -1830,7 +1847,7 @@ mod test {
     struct TestHandle<S: TestSetup> {
         handle: testing::TestHandle,
         connection: Connection,
-        _rx_job: UnboundedReceiver<JobManagerCommand>,
+        rx_job: UnboundedReceiver<JobManagerCommand>,
         rx_tdp: Option<UnboundedReceiver<TdpManagerCommand>>,
         tx_tdp: Option<UnboundedSender<TdpManagerCommand>>,
         setup: S,
@@ -2029,7 +2046,7 @@ mod test {
         Ok(TestHandle {
             handle,
             connection,
-            _rx_job: rx_job,
+            rx_job,
             rx_tdp,
             tx_tdp,
             setup: config.setup,
@@ -3177,5 +3194,51 @@ mod test {
         assert_eq!(remote.get().await.limit, 10);
 
         service.abort();
+    }
+
+    struct MockUpdateBios1 {}
+
+    #[interface(name = "com.steampowered.SteamOSManager1.UpdateBios1")]
+    impl MockUpdateBios1 {
+        async fn update_bios(&mut self) -> fdo::Result<OwnedObjectPath> {
+            OwnedObjectPath::try_from("/job").map_err(to_zbus_fdo_error)
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_update_bios1_relay() {
+        let test = start(TestConfig::none()).await.unwrap();
+
+        let new_conn = test.handle.new_connection().await.unwrap();
+        test_remote_interface_added::<UpdateBios1, _>(&test, &new_conn)
+            .await
+            .unwrap();
+
+        let proxy = UpdateBios1Proxy::builder(&new_conn)
+            .destination(test.connection.unique_name().unwrap())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        let remote = MockUpdateBios1 {};
+        let object_server = new_conn.object_server();
+        object_server.at("/foo", remote).await.unwrap();
+
+        let mut rx_job = test.rx_job;
+        let service = spawn(async move {
+            let job = rx_job.recv().await;
+            ensure!(matches!(job, Some(JobManagerCommand::MirrorConnection(_))));
+            let Some(JobManagerCommand::MirrorJob { path, reply, .. }) = rx_job.recv().await else {
+                bail!("Unexpected command");
+            };
+            ensure!(path.as_str() == "/job");
+            reply.send(Ok(OwnedObjectPath::try_from("/bar")?)).unwrap();
+            Ok(())
+        });
+
+        let job = proxy.update_bios().await.unwrap();
+        service.await.unwrap().unwrap();
+        assert_eq!(job.as_str(), "/bar");
     }
 }

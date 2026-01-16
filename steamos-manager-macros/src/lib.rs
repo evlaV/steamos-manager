@@ -482,7 +482,10 @@ impl ToTokens for Interface {
             }
         } else {
             quote! {
-                let interface = #struct_name { proxy };
+                let interface = #struct_name {
+                    proxy,
+                    job_manager: self.job_manager.clone()
+                };
                 if !register::<#name>(object_server, interface).await? {
                     return Ok(false);
                 }
@@ -508,6 +511,7 @@ impl ToTokens for Interface {
             #[derive(Debug)]
             pub(crate) struct #struct_name {
                 proxy: #proxy_name<'static>,
+                job_manager: UnboundedSender<JobManagerCommand>,
             }
 
             #[derive(Debug)]
@@ -523,6 +527,7 @@ impl ToTokens for Interface {
                 #[cfg(test)]
                 ping_success: bool,
                 context: <Self as RemoteOwner>::Context,
+                job_manager: UnboundedSender<JobManagerCommand>,
             }
 
             impl RemoteOwner for #owner_name {
@@ -535,6 +540,7 @@ impl ToTokens for Interface {
                     system: &Connection,
                     is_transient: bool,
                     context: <Self as RemoteOwner>::Context,
+                    job_manager: UnboundedSender<JobManagerCommand>,
                 )
                 -> fdo::Result<#owner_name> {
                     let load_task = Self::load_task(
@@ -557,6 +563,7 @@ impl ToTokens for Interface {
                         #[cfg(test)]
                         ping_success: false,
                         context,
+                        job_manager,
                     })
                 }
             }
@@ -751,11 +758,33 @@ impl ToTokens for Method {
         let args = &self.args;
         let ret = &self.ret;
         let arg_names: Vec<Ident> = (0..args.len()).map(|i| format_ident!("arg{i}")).collect();
-        stream.extend(quote! {
-            async fn #name(&self #(, #arg_names: #args)*) -> fdo::Result<#ret> {
-                self.proxy.#name(#(#arg_names),*).await.map_err(zbus_to_zbus_fdo)
-            }
-        });
+
+        if let Some(Type::Path(ty)) = ret
+            && ty
+                .path
+                .get_ident()
+                .map(|ident| ident == "OwnedObjectPath")
+                .unwrap_or_default()
+        {
+            stream.extend(quote! {
+                async fn #name(&self #(, #arg_names: #args)*) -> fdo::Result<#ret> {
+                    let (tx, rx) = oneshot::channel();
+                    let path = self.proxy.#name(#(#arg_names),*).await.map_err(zbus_to_zbus_fdo)?;
+                    self.job_manager.send(JobManagerCommand::MirrorJob {
+                        connection: self.proxy.inner().connection().clone(),
+                        path,
+                        reply: tx,
+                    }).map_err(to_zbus_fdo_error)?;
+                    rx.await.map_err(to_zbus_fdo_error)?
+                }
+            });
+        } else {
+            stream.extend(quote! {
+                async fn #name(&self #(, #arg_names: #args)*) -> fdo::Result<#ret> {
+                    self.proxy.#name(#(#arg_names),*).await.map_err(zbus_to_zbus_fdo)
+                }
+            });
+        }
     }
 }
 
@@ -861,6 +890,7 @@ pub fn remote_manager(input: TokenStream) -> TokenStream {
                                 &self.system,
                                 is_transient,
                                 #context,
+                                self.job_manager.clone(),
                             )
                             .await?;
                             match iface.register().await {

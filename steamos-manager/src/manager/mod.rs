@@ -7,10 +7,13 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use tokio::sync::mpsc::UnboundedSender;
 use zbus::names::{OwnedBusName, OwnedWellKnownName};
 use zbus::object_server::Interface;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, ObjectServer, fdo};
+
+use crate::job::JobManagerCommand;
 
 pub(crate) mod root;
 pub(crate) mod user;
@@ -27,6 +30,7 @@ pub(crate) trait RemoteOwner: Sized {
         system: &Connection,
         is_transient: bool,
         context: Self::Context,
+        job_manager: UnboundedSender<JobManagerCommand>,
     ) -> fdo::Result<Self>;
 }
 

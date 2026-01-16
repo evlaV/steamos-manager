@@ -138,4 +138,7 @@ the future.
 - GpuPerformanceLevel1
 - GpuPowerProfile1
 - PerformanceProfile1
+- Storage1
 - TdpLimit1
+- UpdateBios1
+- UpdateDock1
