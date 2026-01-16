@@ -153,27 +153,29 @@ pub(crate) trait TdpLimitManager: Send + Sync {
 
 pub(crate) async fn tdp_limit_manager(system: &Connection) -> Result<Box<dyn TdpLimitManager>> {
     let config = device_config().await?;
-    let config = config
-        .as_ref()
-        .and_then(|config| config.tdp_limit.as_ref())
-        .ok_or(anyhow!("No TDP limit configured"))?;
-
-    Ok(match &config.method {
-        TdpLimitingMethod::FirmwareAttribute => {
-            let Some(ref firmware_attribute) = config.firmware_attribute else {
-                bail!("Firmware attribute TDP limiting method not configured");
-            };
-            Box::new(FirmwareAttributeLimitManager {
-                attribute: firmware_attribute.attribute.clone(),
-                performance_profile: firmware_attribute.performance_profile.clone(),
-            })
-        }
-        TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {}),
-        TdpLimitingMethod::RemoteInterface => Box::new(RemoteInterfaceLimitManager {
+    if let Some(config) = config.as_ref().and_then(|config| config.tdp_limit.as_ref()) {
+        Ok(match &config.method {
+            TdpLimitingMethod::FirmwareAttribute => {
+                let Some(ref firmware_attribute) = config.firmware_attribute else {
+                    bail!("Firmware attribute TDP limiting method not configured");
+                };
+                Box::new(FirmwareAttributeLimitManager {
+                    attribute: firmware_attribute.attribute.clone(),
+                    performance_profile: firmware_attribute.performance_profile.clone(),
+                })
+            }
+            TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {}),
+            TdpLimitingMethod::RemoteInterface => Box::new(RemoteInterfaceLimitManager {
+                connection: system.clone(),
+                proxy: None,
+            }),
+        })
+    } else {
+        Ok(Box::new(RemoteInterfaceLimitManager {
             connection: system.clone(),
             proxy: None,
-        }),
-    })
+        }))
+    }
 }
 
 pub(crate) struct TdpManagerService {
@@ -726,10 +728,10 @@ impl TdpManagerService {
         session: &Connection,
     ) -> Result<TdpManagerService> {
         let config = device_config().await?;
-        let config = config
+        let download_mode_limit = config
             .as_ref()
             .and_then(|config| config.tdp_limit.as_ref())
-            .ok_or(anyhow!("No TDP limit configured"))?;
+            .and_then(|config| config.download_mode_limit);
 
         let manager = tdp_limit_manager(system).await?;
         let proxy = RootManagerProxy::new(system).await?;
@@ -741,7 +743,7 @@ impl TdpManagerService {
             download_set: JoinSet::new(),
             download_handles: HashMap::new(),
             previous_limit: None,
-            download_mode_limit: config.download_mode_limit,
+            download_mode_limit,
             manager,
         })
     }

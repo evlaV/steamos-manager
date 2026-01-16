@@ -1832,7 +1832,6 @@ mod test {
         connection: Connection,
         _rx_job: UnboundedReceiver<JobManagerCommand>,
         rx_tdp: Option<UnboundedReceiver<TdpManagerCommand>>,
-        tx_tdp: Option<UnboundedSender<TdpManagerCommand>>,
         setup: S,
     }
 
@@ -2008,7 +2007,7 @@ mod test {
             connection.clone(),
             tx_ctx,
             tx_job,
-            tx_tdp.clone(),
+            tx_tdp,
         )
         .await?;
 
@@ -2031,7 +2030,6 @@ mod test {
             connection,
             _rx_job: rx_job,
             rx_tdp,
-            tx_tdp,
             setup: config.setup,
         })
     }
@@ -3056,26 +3054,12 @@ mod test {
 
     #[tokio::test]
     async fn remote_tdp_limit1_relay() {
-        let mut config = DeviceConfig::default();
-        config.tdp_limit = Some(TdpLimitConfig {
-            method: TdpLimitingMethod::RemoteInterface,
-            range: None,
-            download_mode_limit: None,
-            firmware_attribute: None,
-        });
-        let mut test = start(TestConfig {
-            platform: None,
-            device: Some(config),
-            setup: NopTestSetup::default(),
-        })
-        .await
-        .unwrap();
+        let test = start(TestConfig::none()).await.unwrap();
 
-        let rx_tdp = test.rx_tdp.take();
-        let mut service =
-            TdpManagerService::new(rx_tdp.unwrap(), &test.connection, &test.connection)
-                .await
-                .unwrap();
+        let (tx_tdp, rx_tdp) = unbounded_channel::<TdpManagerCommand>();
+        let mut service = TdpManagerService::new(rx_tdp, &test.connection, &test.connection)
+            .await
+            .unwrap();
         let service = spawn(async move { service.run().await });
 
         let new_conn = test.handle.new_connection().await.unwrap();
@@ -3086,7 +3070,7 @@ mod test {
             .interface::<_, RemoteInterface1>(MANAGER_PATH)
             .await
             .unwrap();
-        remote_iface.get_mut().await.context_tdp_limit1 = test.tx_tdp.clone();
+        remote_iface.get_mut().await.context_tdp_limit1 = Some(tx_tdp);
 
         test_remote_interface_added::<TdpLimit1, _>(&test, &new_conn)
             .await
