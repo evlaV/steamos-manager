@@ -58,6 +58,7 @@ struct MirroredJob {
     job: Job1Proxy<'static>,
 }
 
+#[derive(Debug)]
 pub enum JobManagerCommand {
     MirrorConnection(Connection),
     MirrorJob {
@@ -536,28 +537,20 @@ pub(crate) mod test {
         let (fin_tx, fin_rx) = oneshot::channel();
 
         let job: JoinHandle<Result<()>> = tokio::spawn(async move {
-            let connection = Builder::address(address)
-                .expect("address")
-                .build()
-                .await
-                .expect("build");
-            let mut jm = JobManager::new(connection.clone()).await.expect("jm");
+            let connection = Builder::address(address)?.build().await?;
+            let mut jm = JobManager::new(connection.clone()).await?;
 
             sleep(Duration::from_millis(10)).await;
 
             let path = jm
                 .mirror_job(&connection, format!("{JOB_PREFIX}/0"))
-                .await
-                .expect("mirror_job");
+                .await?;
             let name = connection.unique_name().unwrap().clone();
             let proxy = Job1Proxy::builder(&connection)
-                .destination(BusName::Unique(name.into()))
-                .expect("destination")
-                .path(path)
-                .expect("path")
+                .destination(BusName::Unique(name.into()))?
+                .path(path)?
                 .build()
-                .await
-                .expect("build");
+                .await?;
 
             match proxy.pause().await.unwrap_err() {
                 zbus::Error::MethodError(_, Some(text), _) => tx.send(text).await?,
