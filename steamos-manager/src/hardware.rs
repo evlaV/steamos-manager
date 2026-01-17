@@ -480,7 +480,7 @@ pub mod test {
         );
         assert_eq!(
             device_variant().await.unwrap(),
-            (String::from("rog_ally_x"), String::from("RC73XA"))
+            (String::from("rog_xbox_ally_x"), String::from("RC73XA"))
         );
     }
 
