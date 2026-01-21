@@ -1812,13 +1812,13 @@ mod test {
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
     };
     use crate::power::{TdpLimitingMethod, TdpManagerService};
-    use crate::proxy::RemoteInterface1Proxy;
+    use crate::proxy::{LowPowerMode1Proxy, RemoteInterface1Proxy};
     use crate::session::{SessionManagerState, make_managed};
     use crate::systemd::test::{MockManager, MockUnit};
     use crate::{path, testing};
 
     use anyhow::{anyhow, ensure};
-    use std::num::NonZeroU32;
+    use std::num::{NonZero, NonZeroU32};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::Duration;
@@ -1832,6 +1832,7 @@ mod test {
         connection: Connection,
         _rx_job: UnboundedReceiver<JobManagerCommand>,
         rx_tdp: Option<UnboundedReceiver<TdpManagerCommand>>,
+        tx_tdp: Option<UnboundedSender<TdpManagerCommand>>,
         setup: S,
     }
 
@@ -2007,7 +2008,7 @@ mod test {
             connection.clone(),
             tx_ctx,
             tx_job,
-            tx_tdp,
+            tx_tdp.clone(),
         )
         .await?;
 
@@ -2030,6 +2031,7 @@ mod test {
             connection,
             _rx_job: rx_job,
             rx_tdp,
+            tx_tdp,
             setup: config.setup,
         })
     }
@@ -3052,26 +3054,39 @@ mod test {
         );
     }
 
-    #[tokio::test]
-    async fn remote_tdp_limit1_relay() {
-        let test = start(TestConfig::none()).await.unwrap();
-
-        let (tx_tdp, rx_tdp) = unbounded_channel::<TdpManagerCommand>();
-        let mut service = TdpManagerService::new(rx_tdp, &test.connection, &test.connection)
-            .await
-            .unwrap();
+    async fn setup_tdp_manager<S: TestSetup>(
+        test: &mut TestHandle<S>,
+    ) -> Result<JoinHandle<Result<()>>> {
+        let tx_tdp;
+        let rx_tdp;
+        if let Some(rx) = test.rx_tdp.take()
+            && let Some(tx) = test.tx_tdp.take()
+        {
+            rx_tdp = rx;
+            tx_tdp = tx;
+        } else {
+            (tx_tdp, rx_tdp) = unbounded_channel::<TdpManagerCommand>();
+        }
+        let mut service =
+            TdpManagerService::new(rx_tdp, &test.connection, &test.connection).await?;
         let service = spawn(async move { service.run().await });
-
-        let new_conn = test.handle.new_connection().await.unwrap();
 
         let remote_iface = test
             .connection
             .object_server()
             .interface::<_, RemoteInterface1>(MANAGER_PATH)
-            .await
-            .unwrap();
+            .await?;
         remote_iface.get_mut().await.context_tdp_limit1 = Some(tx_tdp);
 
+        Ok(service)
+    }
+
+    #[tokio::test]
+    async fn remote_tdp_limit1_relay() {
+        let mut test = start(TestConfig::none()).await.unwrap();
+
+        let service = setup_tdp_manager(&mut test).await.unwrap();
+        let new_conn = test.handle.new_connection().await.unwrap();
         test_remote_interface_added::<TdpLimit1, _>(&test, &new_conn)
             .await
             .unwrap();
@@ -3099,6 +3114,67 @@ mod test {
         assert_eq!(proxy.tdp_limit_max().await.unwrap(), 15);
         proxy.set_tdp_limit(12).await.unwrap();
         assert_eq!(remote.get().await.limit, 12);
+
+        service.abort();
+    }
+
+    #[tokio::test]
+    async fn remote_tdp_limit1_relay_download_mode() {
+        let mut device = DeviceConfig::default();
+        device.tdp_limit = Some(TdpLimitConfig {
+            method: TdpLimitingMethod::RemoteInterface,
+            range: None,
+            download_mode_limit: Some(NonZero::new(5).unwrap()),
+            firmware_attribute: None,
+        });
+        let mut test = start(TestConfig {
+            platform: None,
+            device: Some(device),
+            setup: NopTestSetup::default(),
+        })
+        .await
+        .unwrap();
+
+        let service = setup_tdp_manager(&mut test).await.unwrap();
+        let new_conn = test.handle.new_connection().await.unwrap();
+        test_remote_interface_added::<TdpLimit1, _>(&test, &new_conn)
+            .await
+            .unwrap();
+        assert!(!test_interface_missing::<LowPowerMode1>(&test.connection).await);
+
+        let unique_name = test.connection.unique_name().unwrap();
+        let proxy = TdpLimit1Proxy::builder(&new_conn)
+            .destination(unique_name)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let low_power_proxy = LowPowerMode1Proxy::builder(&new_conn)
+            .destination(unique_name)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        let remote = MockTdpLimit1 {
+            limit: 10,
+            min: 3,
+            max: 15,
+        };
+        let object_server = new_conn.object_server();
+        object_server.at("/foo", remote).await.unwrap();
+        let remote = object_server
+            .interface::<_, MockTdpLimit1>("/foo")
+            .await
+            .unwrap();
+        assert_eq!(proxy.tdp_limit().await.unwrap(), 10);
+        let fd = low_power_proxy.enter_download_mode("foo").await.unwrap();
+        assert_eq!(proxy.tdp_limit().await.unwrap(), 5);
+        assert_eq!(remote.get().await.limit, 5);
+        drop(fd);
+        sleep(Duration::from_millis(4)).await;
+        assert_eq!(proxy.tdp_limit().await.unwrap(), 10);
+        assert_eq!(remote.get().await.limit, 10);
 
         service.abort();
     }
