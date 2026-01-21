@@ -12,15 +12,16 @@ use std::str::FromStr;
 use std::sync::{self, Arc, Once};
 use std::time::Duration;
 use tempfile::{TempDir, tempdir};
-use tokio::fs::read;
+use tokio::fs::{create_dir_all, read};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tracing::error;
 use tracing::subscriber::set_global_default;
+use tracing::{debug, error};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry, fmt};
 use zbus::Address;
+use zbus::address::transport::{Transport, UnixSocket};
 use zbus::connection::{Builder, Connection};
 use zbus::object_server::Interface;
 use zbus::zvariant::ObjectPath;
@@ -126,6 +127,7 @@ pub struct TestHandle {
 
 impl MockDBus {
     pub async fn new() -> Result<MockDBus> {
+        create_dir_all("/tmp/steamos-manager").await?;
         let mut process = Command::new("/usr/bin/dbus-daemon")
             .args([
                 "--nofork",
@@ -175,6 +177,17 @@ impl MockDBus {
                 break;
             }
             std::thread::sleep(Duration::from_micros(100));
+        }
+
+        if let Transport::Unix(sock) = self.address.transport() {
+            match sock.path() {
+                UnixSocket::File(path) => {
+                    if let Err(e) = std::fs::remove_file(path) {
+                        debug!("Failed to remove leftover DBus socket: {e}");
+                    }
+                }
+                x => debug!("Can't remove {x:?}"),
+            }
         }
         Ok(())
     }
