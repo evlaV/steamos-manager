@@ -1928,6 +1928,7 @@ mod test {
                 range: Some(RangeConfig::new(3, 15)),
                 download_mode_limit: NonZeroU32::new(6),
                 firmware_attribute: None,
+                performance_profile: None,
             }),
             gpu_performance: Some(GpuPerformanceConfig {
                 driver: GpuPerformanceLevelDriverType::Amdgpu,
@@ -3143,6 +3144,7 @@ mod test {
             range: None,
             download_mode_limit: Some(NonZero::new(5).unwrap()),
             firmware_attribute: None,
+            performance_profile: None,
         });
         let mut test = start(TestConfig {
             platform: None,

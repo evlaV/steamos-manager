@@ -118,7 +118,9 @@ pub enum TdpLimitingMethod {
 }
 
 #[derive(Debug)]
-pub(crate) struct AmdgpuHwmonTdpLimitManager {}
+pub(crate) struct AmdgpuHwmonTdpLimitManager {
+    performance_profile: Option<String>,
+}
 
 #[derive(Debug)]
 pub(crate) struct FirmwareAttributeLimitManager {
@@ -164,7 +166,9 @@ pub(crate) async fn tdp_limit_manager(system: &Connection) -> Result<Box<dyn Tdp
                     performance_profile: firmware_attribute.performance_profile.clone(),
                 })
             }
-            TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {}),
+            TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {
+                performance_profile: config.performance_profile.clone(),
+            }),
             TdpLimitingMethod::RemoteInterface => Box::new(RemoteInterfaceLimitManager {
                 connection: system.clone(),
                 proxy: None,
@@ -417,6 +421,7 @@ async fn find_platform_profile(name: &str) -> Result<PathBuf> {
 #[async_trait]
 impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
     async fn get_tdp_limit(&self) -> Result<u32> {
+        ensure!(self.is_active().await?, "TDP limiting not active");
         let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
         let power1cap = fs::read_to_string(base.join(TDP_LIMIT1)).await?;
         let power1cap: u32 = power1cap.trim_end().parse()?;
@@ -424,6 +429,7 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
     }
 
     async fn set_tdp_limit(&self, limit: u32) -> Result<()> {
+        ensure!(self.is_active().await?, "TDP limiting not active");
         ensure!(
             self.get_tdp_limit_range().await?.contains(&limit),
             "Invalid limit"
@@ -459,6 +465,21 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
             return Ok(range.min..=range.max);
         }
         bail!("No TDP limit range configured");
+    }
+
+    async fn is_active(&self) -> Result<bool> {
+        let Some(ref performance_profile) = self.performance_profile else {
+            return Ok(true);
+        };
+        let config = device_config().await?;
+        if let Some(config) = config
+            .as_ref()
+            .and_then(|config| config.performance_profile.as_ref())
+        {
+            Ok(get_platform_profile(&config.platform_profile_name).await? == *performance_profile)
+        } else {
+            Ok(true)
+        }
     }
 }
 
@@ -1005,6 +1026,7 @@ pub(crate) mod test {
             range: Some(RangeConfig { min: 3, max: 15 }),
             download_mode_limit: None,
             firmware_attribute: None,
+            performance_profile: None,
         });
         handle.test.set_device_config(config).await;
         let manager = tdp_limit_manager(&connection).await.unwrap();
@@ -1031,6 +1053,7 @@ pub(crate) mod test {
             range: Some(RangeConfig { min: 3, max: 15 }),
             download_mode_limit: None,
             firmware_attribute: None,
+            performance_profile: None,
         });
         handle.test.set_device_config(config).await;
         let manager = tdp_limit_manager(&connection).await.unwrap();
@@ -1380,6 +1403,7 @@ pub(crate) mod test {
             range: Some(RangeConfig { min: 3, max: 15 }),
             download_mode_limit: NonZeroU32::new(6),
             firmware_attribute: None,
+            performance_profile: None,
         });
         h.test.set_device_config(config).await;
         let manager = tdp_limit_manager(&connection).await.unwrap();
@@ -1476,6 +1500,7 @@ pub(crate) mod test {
             range: Some(RangeConfig { min: 3, max: 15 }),
             download_mode_limit: None,
             firmware_attribute: None,
+            performance_profile: None,
         });
         h.test.set_device_config(config).await;
         let manager = tdp_limit_manager(&connection).await.unwrap();
@@ -1546,6 +1571,7 @@ pub(crate) mod test {
                 attribute: String::from("tdp0"),
                 performance_profile: Some(String::from("custom")),
             }),
+            performance_profile: None,
         });
         h.test.set_device_config(config).await;
 
@@ -1665,6 +1691,7 @@ pub(crate) mod test {
                 attribute: String::from("tdp0"),
                 performance_profile: None,
             }),
+            performance_profile: None,
         });
         h.test.set_device_config(config).await;
 

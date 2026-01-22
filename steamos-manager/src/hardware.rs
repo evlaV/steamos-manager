@@ -159,6 +159,7 @@ pub(crate) struct TdpLimitConfig {
     pub range: Option<RangeConfig<u32>>,
     pub download_mode_limit: Option<NonZeroU32>,
     pub firmware_attribute: Option<FirmwareAttributeConfig>,
+    pub performance_profile: Option<String>,
 }
 
 async fn try_read_to_string<S: AsRef<Path>>(path: S) -> std::io::Result<Option<String>> {
