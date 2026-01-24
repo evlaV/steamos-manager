@@ -7,11 +7,16 @@
 
 use anyhow::{Result, anyhow};
 use std::ffi::OsStr;
-
 #[cfg(not(test))]
 use std::process::Stdio;
 #[cfg(not(test))]
+use tokio::io::{AsyncBufReadExt, BufReader};
+#[cfg(not(test))]
 use tokio::process::Command;
+#[cfg(not(test))]
+use tokio::select;
+#[cfg(not(test))]
+use tracing::debug;
 
 #[cfg(not(test))]
 pub async fn script_exit_code(
@@ -19,13 +24,44 @@ pub async fn script_exit_code(
     args: &[impl AsRef<OsStr>],
 ) -> Result<i32> {
     // Run given script and return the exit code
-    let output = Command::new(executable)
+    let executable = executable.as_ref();
+    let mut child = Command::new(executable)
         .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .await?;
-    output.status.code().ok_or(anyhow!("Killed by signal"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let executable = executable.display();
+
+    let pid = child.id().unwrap_or(0);
+    debug!(
+        "Started subprocess {executable} {:?} as {pid}",
+        args.iter()
+            .map(|arg| arg.as_ref().display())
+            .collect::<Vec<_>>()
+    );
+
+    let mut stdout = BufReader::new(
+        child
+            .stdout
+            .take()
+            .ok_or(anyhow!("Failed to set up subprocess"))?,
+    )
+    .lines();
+    let mut stderr = BufReader::new(
+        child
+            .stderr
+            .take()
+            .ok_or(anyhow!("Failed to set up subprocess"))?,
+    )
+    .lines();
+    loop {
+        select! {
+            Ok(Some(out)) = stdout.next_line() => debug!("[{executable}]{pid} out: {out}"),
+            Ok(Some(err)) = stderr.next_line() => debug!("[{executable}]{pid} err: {err}"),
+            status = child.wait() => return status?.code().ok_or(anyhow!("Killed by signal")),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -55,12 +91,12 @@ pub async fn script_output(
     args: &[impl AsRef<OsStr>],
 ) -> Result<String> {
     // Run given command and return the output given
-    let output = Command::new(executable).args(args).output();
-
-    let output = output.await?;
-
-    let s = std::str::from_utf8(&output.stdout)?;
-    Ok(s.to_string())
+    let output = Command::new(executable)
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .await?;
+    Ok(str::from_utf8(&output.stdout)?.to_string())
 }
 
 #[cfg(test)]
