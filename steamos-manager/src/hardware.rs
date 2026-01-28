@@ -7,13 +7,12 @@
 
 use anyhow::{Result, bail, ensure};
 use num_enum::TryFromPrimitive;
-use serde::de::Error;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use std::io::ErrorKind;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::str::FromStr;
-use strum::{Display, EnumString, VariantNames};
+use strum::{Display, EnumString};
 use tokio::fs::{read_dir, read_to_string};
 #[cfg(not(test))]
 use tokio::sync::OnceCell;
@@ -154,7 +153,6 @@ impl<T: Clone> RangeConfig<T> {
 
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct TdpLimitConfig {
-    #[serde(deserialize_with = "de_tdp_limiter_method")]
     pub method: TdpLimitingMethod,
     pub range: Option<RangeConfig<u32>>,
     pub download_mode_limit: Option<NonZeroU32>,
@@ -228,16 +226,6 @@ impl DeviceConfig {
         }
         Ok(None)
     }
-}
-
-fn de_tdp_limiter_method<'de, D>(deserializer: D) -> Result<TdpLimitingMethod, D::Error>
-where
-    D: Deserializer<'de>,
-    D::Error: Error,
-{
-    let string = String::deserialize(deserializer)?;
-    TdpLimitingMethod::try_from(string.as_str())
-        .map_err(|_| D::Error::unknown_variant(string.as_str(), TdpLimitingMethod::VARIANTS))
 }
 
 #[cfg(not(test))]

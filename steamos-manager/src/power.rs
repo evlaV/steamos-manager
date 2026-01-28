@@ -8,6 +8,7 @@
 use anyhow::{Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use num_enum::TryFromPrimitive;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::num::NonZeroU32;
@@ -109,8 +110,9 @@ pub enum CPUBoostState {
     Enabled = 1,
 }
 
-#[derive(Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
+#[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum TdpLimitingMethod {
     AmdgpuHwmon,
     FirmwareAttribute,
