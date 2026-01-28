@@ -22,7 +22,9 @@ use zbus::Connection;
 use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
-use crate::power::TdpLimitingMethod;
+use crate::power::{
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, TdpLimitingMethod,
+};
 use crate::process::{run_script, script_exit_code};
 use crate::systemd::{JobMode, SystemdUnit};
 
@@ -86,11 +88,11 @@ pub(crate) struct DeviceConfig {
     pub inputplumber: Option<InputPlumberConfig>,
 }
 
-#[derive(Clone, Deserialize, Debug)]
+#[derive(Clone, Default, Deserialize, Debug)]
 pub(crate) struct BatteryChargeLimitConfig {
-    pub suggested_minimum_limit: Option<i32>,
-    pub hwmon_name: String,
-    pub attribute: String,
+    #[serde(default = "battery_charge_limit_minimum_default")]
+    pub suggested_minimum_limit: i32,
+    pub method: BatteryChargeLimitMethod,
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -328,6 +330,10 @@ impl FanControl {
         }
         Ok(())
     }
+}
+
+fn battery_charge_limit_minimum_default() -> i32 {
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT
 }
 
 #[cfg(test)]

@@ -44,9 +44,10 @@ use crate::manager::{MANAGER_PATH, RemoteInterface, RemoteInterfaceConfig, Remot
 use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
-    CpuSchedulerManager, TdpManagerCommand, get_available_cpu_scaling_governors,
-    get_available_platform_profiles, get_cpu_boost_state, get_cpu_scaling_governor,
-    get_max_charge_level, get_platform_profile, register_tdp_limit1, unregister_tdp_limit1,
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, TdpManagerCommand,
+    get_available_cpu_scaling_governors, get_available_platform_profiles, get_cpu_boost_state,
+    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, register_tdp_limit1,
+    unregister_tdp_limit1,
 };
 use crate::proxy::{
     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
@@ -315,10 +316,6 @@ impl AmbientLightSensor1 {
     }
 }
 
-impl BatteryChargeLimit1 {
-    const DEFAULT_SUGGESTED_MINIMUM_LIMIT: i32 = 10;
-}
-
 #[remote(name = "com.steampowered.SteamOSManager1.BatteryChargeLimit1")]
 impl BatteryChargeLimit1 {
     #[zbus(property)]
@@ -346,14 +343,12 @@ impl BatteryChargeLimit1 {
     #[zbus(property(emits_changed_signal = "const"))]
     async fn suggested_minimum_limit(&self) -> i32 {
         let Ok(Some(config)) = device_config().await else {
-            return BatteryChargeLimit1::DEFAULT_SUGGESTED_MINIMUM_LIMIT;
+            return BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT;
         };
         let Some(ref config) = config.battery_charge_limit else {
-            return BatteryChargeLimit1::DEFAULT_SUGGESTED_MINIMUM_LIMIT;
+            return BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT;
         };
-        config
-            .suggested_minimum_limit
-            .unwrap_or(BatteryChargeLimit1::DEFAULT_SUGGESTED_MINIMUM_LIMIT)
+        config.suggested_minimum_limit
     }
 }
 
@@ -1828,7 +1823,7 @@ mod test {
     use crate::platform::{
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
     };
-    use crate::power::{TdpLimitingMethod, TdpManagerService};
+    use crate::power::{BatteryChargeLimitMethod, TdpLimitingMethod, TdpManagerService};
     use crate::proxy::{LowPowerMode1Proxy, RemoteInterface1Proxy};
     use crate::session::{SessionManagerState, make_managed};
     use crate::systemd::test::{MockManager, MockUnit};
@@ -1938,9 +1933,11 @@ mod test {
                 driver: GpuPowerProfileDriverType::Amdgpu,
             }),
             battery_charge_limit: Some(BatteryChargeLimitConfig {
-                suggested_minimum_limit: Some(10),
-                hwmon_name: String::from("steamdeck_hwmon"),
-                attribute: String::from("max_battery_charge_level"),
+                suggested_minimum_limit: 10,
+                method: BatteryChargeLimitMethod::HwmonAttribute {
+                    hwmon: String::from("steamdeck_hwmon"),
+                    attribute: String::from("max_battery_charge_level"),
+                },
             }),
             performance_profile: Some(PerformanceProfileConfig {
                 platform_profile_name: String::from("power-driver"),
@@ -2979,7 +2976,7 @@ mod test {
 
         #[zbus(property(emits_changed_signal = "const"))]
         async fn suggested_minimum_limit(&self) -> i32 {
-            return BatteryChargeLimit1::DEFAULT_SUGGESTED_MINIMUM_LIMIT;
+            return BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT;
         }
     }
 

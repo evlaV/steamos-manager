@@ -30,5 +30,7 @@ driver = "amdgpu"
 
 [battery_charge_limit]
 suggested_minimum_limit = 10
-hwmon_name = "steamdeck_hwmon"
+
+[battery_charge_limit.method.hwmon_attribute]
+hwmon = "steamdeck_hwmon"
 attribute = "max_battery_charge_level"

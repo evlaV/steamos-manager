@@ -23,6 +23,4 @@ platform_profile_name = "asus-wmi"
 suggested_default = "performance"
 
 [battery_charge_limit]
-suggested_minimum_limit = 10
-hwmon_name = "BAT1"
-attribute = "device/charge_control_end_threshold"
+method = "acpi_sb"
