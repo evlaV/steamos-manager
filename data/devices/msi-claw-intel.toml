@@ -1,18 +1,18 @@
 [[device]]
 dmi.sys_vendor = "Micro-Star International Co., Ltd."
-dmi.product_name = "Claw A1M"
+dmi.board_name = "MS-1T41"
 device = "claw"
 variant = "Claw A1M"
 
 [[device]]
 dmi.sys_vendor = "Micro-Star International Co., Ltd."
-dmi.product_name = "Claw 7 AI+ A2VM"
+dmi.board_name = "MS-1T42"
 device = "claw"
 variant = "Claw 7 AI+ A2VM"
 
 [[device]]
 dmi.sys_vendor = "Micro-Star International Co., Ltd."
-dmi.product_name = "Claw 8 AI+ A2VM"
+dmi.board_name = "MS-1T52"
 device = "claw"
 variant = "Claw 8 AI+ A2VM"
 

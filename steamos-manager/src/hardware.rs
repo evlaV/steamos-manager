@@ -587,7 +587,7 @@ pub mod test {
     async fn board_lookup_msi_claw_a1m() {
         let _h = setup_board(
             "Micro-Star International Co., Ltd.\n",
-            "INVALID\n",
+            "MS-1T41\n",
             "Claw A1M\n",
         )
         .await
@@ -606,7 +606,7 @@ pub mod test {
     async fn board_lookup_msi_claw7_a2vm() {
         let _h = setup_board(
             "Micro-Star International Co., Ltd.\n",
-            "INVALID\n",
+            "MS-1T42\n",
             "Claw 7 AI+ A2VM\n",
         )
         .await
@@ -625,7 +625,7 @@ pub mod test {
     async fn board_lookup_msi_claw8_a2vm() {
         let _h = setup_board(
             "Micro-Star International Co., Ltd.\n",
-            "INVALID\n",
+            "MS-1T52\n",
             "Claw 8 AI+ A2VM\n",
         )
         .await
