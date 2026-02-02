@@ -12,6 +12,12 @@ variant = "G1618-04"
 
 [[device]]
 dmi.sys_vendor = "GPD"
+dmi.product_name = "G1618-05"
+device = "gpd_win5"
+variant = "G1618-05"
+
+[[device]]
+dmi.sys_vendor = "GPD"
 dmi.product_name = "G1619-04"
 device = "gpd_win_max_2"
 variant = "G1619-04"
