@@ -9,7 +9,7 @@ test:
   tags:
     - x86_64-linux-kvm-docker
   script:
-    - pacman -Sy --noconfirm --needed dbus rust gsettings-desktop-schemas clang speech-dispatcher cargo-tarpaulin
+    - pacman -Syu --noconfirm --needed dbus rust gsettings-desktop-schemas clang speech-dispatcher cargo-tarpaulin
     - dbus-run-session cargo tarpaulin --out xml --engine llvm
   artifacts:
     reports:
@@ -28,7 +28,7 @@ fmt:
   tags:
     - x86_64-linux-kvm-docker
   script:
-    - pacman -Sy --noconfirm --needed rust
+    - pacman -Syu --noconfirm --needed rust
     - cargo fmt --check
 
 clippy:
@@ -36,7 +36,7 @@ clippy:
   tags:
     - x86_64-linux-kvm-docker
   script:
-    - pacman -Sy --noconfirm --needed rust clang speech-dispatcher
+    - pacman -Syu --noconfirm --needed rust clang speech-dispatcher
     - cargo clippy -- -Dwarnings
 
 proxy:
@@ -44,7 +44,7 @@ proxy:
   tags:
     - x86_64-linux-kvm-docker
   script:
-    - pacman -Sy --noconfirm --needed rust git zbus_xmlgen
+    - pacman -Syu --noconfirm --needed rust git zbus_xmlgen
     - cd steamos-manager-proxy/src
     - ./update_proxy.sh
     - git status
@@ -56,7 +56,7 @@ build:
   tags:
     - x86_64-linux-kvm-docker
   script:
-    - pacman -Sy --noconfirm --needed dbus rust gsettings-desktop-schemas clang speech-dispatcher
+    - pacman -Syu --noconfirm --needed dbus rust gsettings-desktop-schemas clang speech-dispatcher
     - make install DESTDIR=build
     - tar --zstd -C build -cvf build.tar.zst .
   artifacts:
