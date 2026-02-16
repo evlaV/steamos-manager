@@ -16,7 +16,7 @@ use strum::{Display, EnumString};
 use tokio::fs::{read_dir, read_to_string};
 #[cfg(not(test))]
 use tokio::sync::OnceCell;
-use tracing::error;
+use tracing::{debug, error};
 use zbus::Connection;
 
 use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
@@ -24,9 +24,11 @@ use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
     BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, TdpLimitingMethod,
+    find_hwmon,
 };
 use crate::process::{run_script, script_exit_code};
 use crate::systemd::{JobMode, SystemdUnit};
+use crate::write_synced;
 
 #[cfg(not(test))]
 static DEVICE_CONFIG: OnceCell<Option<DeviceConfig>> = OnceCell::const_new();
@@ -81,6 +83,7 @@ pub(crate) enum InputPlumberTargetDevice {
 pub(crate) struct DeviceConfig {
     pub device: Vec<DeviceMatch>,
     pub tdp_limit: Option<TdpLimitConfig>,
+    pub fan_speed: Option<FanSpeedConfig>,
     pub gpu_performance: Option<GpuPerformanceConfig>,
     pub gpu_power_profile: Option<GpuPowerProfileConfig>,
     pub battery_charge_limit: Option<BatteryChargeLimitConfig>,
@@ -162,6 +165,13 @@ pub(crate) struct TdpLimitConfig {
     pub download_mode_limit: Option<NonZeroU32>,
     pub firmware_attribute: Option<FirmwareAttributeConfig>,
     pub performance_profile: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct FanSpeedConfig {
+    pub hwmon: String,
+    pub attribute: String,
+    pub download_mode_fan_speed: Option<NonZeroU32>,
 }
 
 async fn try_read_to_string<S: AsRef<Path>>(path: S) -> std::io::Result<Option<String>> {
@@ -332,6 +342,17 @@ impl FanControl {
         }
         Ok(())
     }
+
+    pub async fn set_speed(&self, rpm: u32) -> Result<()> {
+        let config = device_config().await?;
+        let Some(config) = config.as_ref().and_then(|config| config.fan_speed.as_ref()) else {
+            bail!("Fan speed not configured");
+        };
+        let base = find_hwmon(&config.hwmon).await?;
+        let path = base.join(&config.attribute);
+        debug!("Writing fan speed {rpm} to {}", path.display());
+        write_synced(path, rpm.to_string().as_bytes()).await
+    }
 }
 
 fn battery_charge_limit_minimum_default() -> i32 {
@@ -345,10 +366,12 @@ pub mod test {
     use crate::platform::{PlatformConfig, ServiceConfig};
     use crate::{enum_roundtrip, testing};
     use std::time::Duration;
-    use tokio::fs::{create_dir_all, write};
+    use tokio::fs::{create_dir_all, read_to_string, write};
     use tokio::time::sleep;
     use zbus::fdo;
     use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+
+    const STEAMDECK_HWMON: &str = "hwmon3";
 
     pub(crate) async fn fake_model(model: SteamDeckVariant) -> Result<()> {
         create_dir_all(path("/sys/class/dmi/id")).await?;
@@ -824,6 +847,34 @@ pub mod test {
         assert_eq!(
             fan_control.get_state().await.unwrap(),
             FanControlState::Bios
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fan_speed() {
+        let mut h = testing::start();
+        let connection = h.new_dbus().await.expect("dbus");
+
+        let mut config = DeviceConfig::default();
+        config.fan_speed = Some(FanSpeedConfig {
+            hwmon: String::from("steamdeck_hwmon"),
+            attribute: String::from("fan1_target"),
+            download_mode_fan_speed: None,
+        });
+        h.test.set_device_config(config).await;
+
+        let base = path(crate::power::HWMON_PREFIX).join(STEAMDECK_HWMON);
+        create_dir_all(&base).await.expect("create_dir_all");
+        write(base.join("name"), "steamdeck_hwmon\n")
+            .await
+            .expect("write");
+        let fan_control = FanControl::new(connection);
+        fan_control.set_speed(2000).await.expect("set_speed");
+        assert_eq!(
+            read_to_string(base.join("fan1_target"))
+                .await
+                .expect("read"),
+            "2000"
         );
     }
 }

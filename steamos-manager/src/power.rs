@@ -30,7 +30,7 @@ use zbus::{Connection, ObjectServer, fdo};
 
 use crate::error::{to_zbus_error, to_zbus_fdo_error};
 use crate::gpu::AMDGPU_HWMON_NAME;
-use crate::hardware::device_config;
+use crate::hardware::{FanControlState, device_config};
 use crate::manager::MANAGER_PATH;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::TdpLimit1;
@@ -198,8 +198,10 @@ pub(crate) struct TdpManagerService {
     download_set: JoinSet<String>,
     download_handles: HashMap<String, u32>,
     download_mode_limit: Option<NonZeroU32>,
+    download_mode_fan_speed: Option<NonZeroU32>,
     previous_limit: Option<NonZeroU32>,
     manager: Box<dyn TdpLimitManager>,
+    restart_fan_control_service: bool,
 }
 
 #[derive(Debug)]
@@ -795,6 +797,10 @@ impl TdpManagerService {
             .as_ref()
             .and_then(|config| config.tdp_limit.as_ref())
             .and_then(|config| config.download_mode_limit);
+        let download_mode_fan_speed = config
+            .as_ref()
+            .and_then(|config| config.fan_speed.as_ref())
+            .and_then(|config| config.download_mode_fan_speed);
 
         let manager = tdp_limit_manager(system).await?;
         let proxy = RootManagerProxy::new(system).await?;
@@ -807,7 +813,9 @@ impl TdpManagerService {
             download_handles: HashMap::new(),
             previous_limit: None,
             download_mode_limit,
+            download_mode_fan_speed,
             manager,
+            restart_fan_control_service: false,
         })
     }
 
@@ -833,6 +841,15 @@ impl TdpManagerService {
                 self.set_tdp_limit(previous_limit.get()).await?;
                 self.previous_limit = None;
             }
+            if self.restart_fan_control_service {
+                debug!("Leaving download mode, restarting fan control service");
+                self.proxy
+                    .set_fan_control_state(FanControlState::Os as u32)
+                    .await
+                    .inspect_err(|e| warn!("Failed to restart fan control service: {e}"))
+                    .ok();
+                self.restart_fan_control_service = false;
+            }
         } else {
             if self.previous_limit.is_none() {
                 debug!("Entering download mode, caching TDP limit of {current_limit}");
@@ -840,6 +857,28 @@ impl TdpManagerService {
             }
             if current_limit != download_mode_limit {
                 self.set_tdp_limit(download_mode_limit.get()).await?;
+            }
+            if let Some(fan_rpm) = self.download_mode_fan_speed {
+                // Stop fan control service if running before setting a fixed fan speed.
+                let state = self
+                    .proxy
+                    .fan_control_state()
+                    .await
+                    .inspect_err(|e| warn!("Failed to get fan control state: {e}"))?;
+
+                if state == FanControlState::Os as u32 {
+                    debug!("Entering download mode, stopping fan control service");
+                    self.proxy
+                        .set_fan_control_state(FanControlState::Bios as u32)
+                        .await
+                        .inspect_err(|e| warn!("Failed to stop fan control service: {e}"))?;
+                    self.restart_fan_control_service = true;
+                }
+                debug!("Setting fan speed to {} RPM", fan_rpm.get());
+                self.proxy
+                    .set_fan_speed(fan_rpm.get())
+                    .await
+                    .inspect_err(|e| warn!("Failed to set fan speed: {e}"))?;
             }
         }
 
@@ -994,8 +1033,8 @@ impl Service for TdpManagerService {
 pub(crate) mod test {
     use super::*;
     use crate::hardware::{
-        BatteryChargeLimitConfig, DeviceConfig, FirmwareAttributeConfig, PerformanceProfileConfig,
-        RangeConfig, TdpLimitConfig,
+        BatteryChargeLimitConfig, DeviceConfig, FanSpeedConfig, FirmwareAttributeConfig,
+        PerformanceProfileConfig, RangeConfig, TdpLimitConfig,
     };
     use crate::{enum_on_off, enum_roundtrip, testing};
     use anyhow::anyhow;
@@ -1465,6 +1504,49 @@ pub(crate) mod test {
         }
     }
 
+    struct MockFanControl {
+        fan_speed_tx: Sender<u32>,
+        fan_control_state_tx: Sender<u32>,
+        fan_control_state: u32,
+    }
+
+    #[interface(name = "com.steampowered.SteamOSManager1.RootManager")]
+    impl MockFanControl {
+        async fn set_tdp_limit(&mut self, limit: u32) -> fdo::Result<()> {
+            let hwmon = path(HWMON_PREFIX);
+            write(
+                hwmon.join("hwmon5").join(TDP_LIMIT1),
+                format!("{limit}000000\n"),
+            )
+            .await
+            .map_err(to_zbus_fdo_error)?;
+            Ok(())
+        }
+
+        async fn set_fan_speed(&mut self, rpm: u32) -> fdo::Result<()> {
+            self.fan_speed_tx
+                .send(rpm)
+                .await
+                .map_err(to_zbus_fdo_error)?;
+            Ok(())
+        }
+
+        #[zbus(property(emits_changed_signal = "false"))]
+        async fn fan_control_state(&self) -> u32 {
+            self.fan_control_state
+        }
+
+        #[zbus(property)]
+        async fn set_fan_control_state(&mut self, state: u32) -> fdo::Result<()> {
+            self.fan_control_state = state;
+            self.fan_control_state_tx
+                .send(state)
+                .await
+                .map_err(to_zbus_fdo_error)?;
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn test_low_power_lock() {
         let mut h = testing::start();
@@ -1557,6 +1639,91 @@ pub(crate) mod test {
         tx.send(TdpManagerCommand::ListDownloadModeHandles(os_tx))
             .unwrap();
         assert!(os_rx.await.unwrap().is_empty());
+
+        fin_tx.send(()).expect("fin");
+        task.await.expect("exit").expect("exit2");
+    }
+
+    #[tokio::test]
+    async fn test_download_mode_fan_speed() {
+        let mut h = testing::start();
+        setup().await.expect("setup");
+
+        let connection = h.new_dbus().await.expect("new_dbus");
+        let (tx, rx) = unbounded_channel();
+        let (fin_tx, fin_rx) = oneshot::channel();
+        let (start_tx, start_rx) = oneshot::channel();
+        let (fan_speed_tx, mut fan_speed_rx) = channel(1);
+        let (fan_control_state_tx, mut fan_control_state_rx) = channel(1);
+
+        let iface = MockFanControl {
+            fan_speed_tx,
+            fan_control_state_tx,
+            fan_control_state: FanControlState::Os as u32,
+        };
+
+        let mut config = DeviceConfig::default();
+        config.tdp_limit = Some(TdpLimitConfig {
+            method: TdpLimitingMethod::AmdgpuHwmon,
+            range: Some(RangeConfig { min: 3, max: 15 }),
+            download_mode_limit: NonZeroU32::new(6),
+            firmware_attribute: None,
+            performance_profile: None,
+        });
+        config.fan_speed = Some(FanSpeedConfig {
+            hwmon: String::from("steamdeck_hwmon"),
+            attribute: String::from("fan1_target"),
+            download_mode_fan_speed: NonZeroU32::new(2000),
+        });
+        h.test.set_device_config(config).await;
+
+        connection
+            .request_name("com.steampowered.SteamOSManager1")
+            .await
+            .expect("reserve_name");
+        let object_server = connection.object_server();
+        object_server
+            .at("/com/steampowered/SteamOSManager1", iface)
+            .await
+            .expect("at");
+
+        let mut service = TdpManagerService::new(rx, &connection, &connection)
+            .await
+            .expect("service");
+        let task = tokio::spawn(async move {
+            start_tx.send(()).unwrap();
+            tokio::select! {
+                r = service.run() => r,
+                _ = fin_rx => Ok(()),
+            }
+        });
+        start_rx.await.expect("start_rx");
+
+        sleep(Duration::from_millis(1)).await;
+
+        tx.send(TdpManagerCommand::SetTdpLimit(6)).unwrap();
+
+        let (h_tx, h_rx) = oneshot::channel();
+        tx.send(TdpManagerCommand::EnterDownloadMode(
+            String::from("test"),
+            h_tx,
+        ))
+        .unwrap();
+
+        {
+            let _h = h_rx.await.unwrap().expect("result").expect("handle");
+
+            assert_eq!(
+                fan_control_state_rx.recv().await.unwrap(),
+                FanControlState::Bios as u32
+            );
+            assert_eq!(fan_speed_rx.recv().await.unwrap(), 2000);
+        }
+
+        assert_eq!(
+            fan_control_state_rx.recv().await.unwrap(),
+            FanControlState::Os as u32
+        );
 
         fin_tx.send(()).expect("fin");
         task.await.expect("exit").expect("exit2");

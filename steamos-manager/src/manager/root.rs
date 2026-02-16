@@ -108,6 +108,12 @@ pub(crate) trait RootManager {
     fn set_tdp_limit(&self, limit: u32) -> zbus::Result<()>;
     fn set_temporary_session(&self, session: &str) -> zbus::Result<()>;
     fn set_default_session(&self, session: &str) -> zbus::Result<()>;
+    fn set_fan_speed(&self, rpm: u32) -> zbus::Result<()>;
+
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn fan_control_state(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn set_fan_control_state(&self, state: u32) -> zbus::Result<()>;
 }
 
 #[interface(name = "com.steampowered.SteamOSManager1.RootManager", spawn = false)]
@@ -171,6 +177,13 @@ impl SteamOSManager {
             .set_state(state)
             .await
             .map_err(to_zbus_error)
+    }
+
+    async fn set_fan_speed(&self, rpm: u32) -> fdo::Result<()> {
+        self.fan_control
+            .set_speed(rpm)
+            .await
+            .map_err(to_zbus_fdo_error)
     }
 
     #[zbus(property(emits_changed_signal = "const"))]

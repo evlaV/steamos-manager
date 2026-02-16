@@ -18,6 +18,11 @@ oui = "e0-31-9e"
 method = "amdgpu_hwmon"
 download_mode_limit = 6
 
+[fan_speed]
+hwmon = "steamdeck_hwmon"
+attribute = "fan1_target"
+download_mode_fan_speed = 2000
+
 [tdp_limit.range]
 min = 3
 max = 15

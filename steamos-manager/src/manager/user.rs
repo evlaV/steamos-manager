@@ -1816,9 +1816,9 @@ mod test {
     use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
     use crate::hardware::test::fake_model;
     use crate::hardware::{
-        BatteryChargeLimitConfig, DeviceConfig, DeviceMatch, DmiMatch, GpuPerformanceConfig,
-        GpuPowerProfileConfig, PerformanceProfileConfig, RangeConfig, SteamDeckVariant,
-        TdpLimitConfig,
+        BatteryChargeLimitConfig, DeviceConfig, DeviceMatch, DmiMatch, FanSpeedConfig,
+        GpuPerformanceConfig, GpuPowerProfileConfig, PerformanceProfileConfig, RangeConfig,
+        SteamDeckVariant, TdpLimitConfig,
     };
     use crate::platform::{
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
@@ -1926,6 +1926,11 @@ mod test {
                 download_mode_limit: NonZeroU32::new(6),
                 firmware_attribute: None,
                 performance_profile: None,
+            }),
+            fan_speed: Some(FanSpeedConfig {
+                hwmon: String::from("steamdeck_hwmon"),
+                attribute: String::from("fan1_target"),
+                download_mode_fan_speed: NonZeroU32::new(2000),
             }),
             gpu_performance: Some(GpuPerformanceConfig {
                 driver: GpuPerformanceLevelDriverType::Amdgpu,
