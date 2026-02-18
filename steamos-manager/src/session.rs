@@ -46,7 +46,7 @@ struct DesktopSession(pub String);
 
 impl Default for DesktopSession {
     fn default() -> DesktopSession {
-        DesktopSession(String::from("plasmax11.desktop"))
+        DesktopSession(String::from("plasma.desktop"))
     }
 }
 
@@ -506,7 +506,7 @@ mod test {
                     DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) => {
                         _ = sender.send(SessionManagerState {
                             default_login_mode: LoginMode::Desktop,
-                            desktop_session: Some(String::from("plasmax11.desktop").into()),
+                            desktop_session: Some(String::from("plasma.desktop").into()),
                         })
                     }
                     _ => (),
@@ -520,7 +520,7 @@ mod test {
 
         assert_eq!(
             manager.default_desktop_session().await.unwrap(),
-            "plasmax11.desktop"
+            "plasma.desktop"
         );
         assert_eq!(
             manager.default_login_mode().await.unwrap(),
