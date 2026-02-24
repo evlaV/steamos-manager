@@ -7,7 +7,7 @@ target/release/steamos-manager: build
 target/release/steamosctl: build
 
 build:
-	@cargo build -r
+	@cargo build -r --target-dir target
 
 clean:
 	@cargo clean
