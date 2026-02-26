@@ -7,9 +7,14 @@
  */
 
 use anyhow::{Error, Result, bail};
+use cecd_proxy::Config1Proxy;
 use num_enum::TryFromPrimitive;
+use serde::Serialize;
 use std::fmt;
 use std::str::FromStr;
+use tokio::fs::{create_dir_all, write};
+use toml;
+use xdg::BaseDirectories;
 use zbus::Connection;
 
 use crate::systemd::{EnableState, JobMode, SystemdUnit, daemon_reload};
@@ -55,56 +60,119 @@ impl HdmiCecState {
     }
 }
 
+#[derive(Serialize, Clone, Debug, Default)]
+struct CecdConfigFragment {
+    pub wake_tv: bool,
+    pub uinput: bool,
+}
+
+enum HdmiCecBackend<'dbus> {
+    Legacy {
+        plasma_rc_unit: SystemdUnit<'dbus>,
+        wakehook_unit: SystemdUnit<'dbus>,
+    },
+    Cecd(Config1Proxy<'dbus>),
+}
+
 pub(crate) struct HdmiCecControl<'dbus> {
-    plasma_rc_unit: SystemdUnit<'dbus>,
-    wakehook_unit: SystemdUnit<'dbus>,
+    backend: HdmiCecBackend<'dbus>,
     connection: Connection,
 }
 
 impl<'dbus> HdmiCecControl<'dbus> {
     pub async fn new(connection: &Connection) -> Result<HdmiCecControl<'dbus>> {
+        let backend = if let Ok(proxy) = Config1Proxy::new(connection).await
+            && proxy.wake_tv().await.is_ok()
+        {
+            // Prefer cecd if available
+            HdmiCecBackend::Cecd(proxy)
+        } else {
+            HdmiCecBackend::Legacy {
+                plasma_rc_unit: SystemdUnit::new(connection, "plasma-remotecontrollers.service")
+                    .await?,
+                wakehook_unit: SystemdUnit::new(connection, "wakehook.service").await?,
+            }
+        };
         Ok(HdmiCecControl {
-            plasma_rc_unit: SystemdUnit::new(connection, "plasma-remotecontrollers.service")
-                .await?,
-            wakehook_unit: SystemdUnit::new(connection, "wakehook.service").await?,
+            backend,
             connection: connection.clone(),
         })
     }
 
     pub async fn get_enabled_state(&self) -> Result<HdmiCecState> {
-        Ok(match self.plasma_rc_unit.enabled().await? {
-            EnableState::Enabled | EnableState::Static => {
-                match self.wakehook_unit.enabled().await? {
-                    EnableState::Enabled | EnableState::Static => HdmiCecState::ControlAndWake,
-                    _ => HdmiCecState::ControlOnly,
+        Ok(match &self.backend {
+            HdmiCecBackend::Legacy {
+                plasma_rc_unit,
+                wakehook_unit,
+            } => {
+                if !matches!(
+                    plasma_rc_unit.enabled().await?,
+                    EnableState::Enabled | EnableState::Static
+                ) {
+                    HdmiCecState::Disabled
+                } else if matches!(
+                    wakehook_unit.enabled().await?,
+                    EnableState::Enabled | EnableState::Static
+                ) {
+                    HdmiCecState::ControlAndWake
+                } else {
+                    HdmiCecState::ControlOnly
                 }
             }
-            _ => HdmiCecState::Disabled,
+            HdmiCecBackend::Cecd(proxy) => {
+                let wake = proxy.wake_tv().await?;
+                let control = proxy.uinput().await?;
+                match (control, wake) {
+                    (true, true) => HdmiCecState::ControlAndWake,
+                    (true, false) => HdmiCecState::ControlOnly,
+                    (false, _) => HdmiCecState::Disabled,
+                }
+            }
         })
     }
 
     pub async fn set_enabled_state(&self, state: HdmiCecState) -> Result<()> {
-        match state {
-            HdmiCecState::Disabled => {
-                self.plasma_rc_unit.mask().await?;
-                self.plasma_rc_unit.stop(JobMode::Fail).await?;
-                self.wakehook_unit.mask().await?;
-                self.wakehook_unit.stop(JobMode::Fail).await?;
-                daemon_reload(&self.connection).await?;
-            }
-            HdmiCecState::ControlOnly => {
-                self.wakehook_unit.mask().await?;
-                self.wakehook_unit.stop(JobMode::Fail).await?;
-                self.plasma_rc_unit.unmask().await?;
-                daemon_reload(&self.connection).await?;
-                self.plasma_rc_unit.start(JobMode::Fail).await?;
-            }
-            HdmiCecState::ControlAndWake => {
-                self.plasma_rc_unit.unmask().await?;
-                self.wakehook_unit.unmask().await?;
-                daemon_reload(&self.connection).await?;
-                self.plasma_rc_unit.start(JobMode::Fail).await?;
-                self.wakehook_unit.start(JobMode::Fail).await?;
+        match &self.backend {
+            HdmiCecBackend::Legacy {
+                plasma_rc_unit,
+                wakehook_unit,
+            } => match state {
+                HdmiCecState::Disabled => {
+                    plasma_rc_unit.mask().await?;
+                    plasma_rc_unit.stop(JobMode::Fail).await?;
+                    wakehook_unit.mask().await?;
+                    wakehook_unit.stop(JobMode::Fail).await?;
+                    daemon_reload(&self.connection).await?;
+                }
+                HdmiCecState::ControlOnly => {
+                    wakehook_unit.mask().await?;
+                    wakehook_unit.stop(JobMode::Fail).await?;
+                    plasma_rc_unit.unmask().await?;
+                    daemon_reload(&self.connection).await?;
+                    plasma_rc_unit.start(JobMode::Fail).await?;
+                }
+                HdmiCecState::ControlAndWake => {
+                    plasma_rc_unit.unmask().await?;
+                    wakehook_unit.unmask().await?;
+                    daemon_reload(&self.connection).await?;
+                    plasma_rc_unit.start(JobMode::Fail).await?;
+                    wakehook_unit.start(JobMode::Fail).await?;
+                }
+            },
+            HdmiCecBackend::Cecd(proxy) => {
+                let fragment = CecdConfigFragment {
+                    wake_tv: state == HdmiCecState::ControlAndWake,
+                    uinput: state != HdmiCecState::Disabled,
+                };
+                let Some(home) = BaseDirectories::new().get_config_home() else {
+                    bail!("No home directory found");
+                };
+                let fragment = toml::to_string(&fragment)?;
+                let path = home.join("cecd/config.d");
+                create_dir_all(&path).await?;
+                let path = path.join("99-steamos-manager.toml");
+                write(path, fragment.as_bytes()).await?;
+                proxy.reload().await?;
             }
         }
 
