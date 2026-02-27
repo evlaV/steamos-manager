@@ -3,6 +3,7 @@ dmi.sys_vendor = "AYANEO"
 dmi.product_name = "AYANEO KUN"
 device = "ayaneo_kun"
 variant = "KUN"
+friendly_name = "AYANEO KUN"
 
 [gpu_performance]
 driver = "amdgpu"

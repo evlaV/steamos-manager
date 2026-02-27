@@ -3,12 +3,16 @@ dmi.sys_vendor = "Valve"
 dmi.board_name = "Jupiter"
 device = "steam_deck"
 variant = "Jupiter"
+friendly_name = "Steam Deck"
+oui = "e0-31-9e"
 
 [[device]]
 dmi.sys_vendor = "Valve"
 dmi.board_name = "Galileo"
 device = "steam_deck"
 variant = "Galileo"
+friendly_name = "Steam Deck"
+oui = "e0-31-9e"
 
 [tdp_limit]
 method = "amdgpu_hwmon"

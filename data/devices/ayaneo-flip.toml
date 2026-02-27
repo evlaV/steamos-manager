@@ -3,18 +3,21 @@ dmi.sys_vendor = "AYANEO"
 dmi.product_name = "FLIP DS"
 device = "ayaneo_flip_ds"
 variant = "DS"
+friendly_name = "AYANEO FLIP DS"
 
 [[device]]
 dmi.sys_vendor = "AYANEO"
 dmi.product_name = "FLIP 1S DS"
 device = "ayaneo_flip_ds"
 variant = "1S DS"
+friendly_name = "AYANEO 1S DS"
 
 [[device]]
 dmi.sys_vendor = "AYANEO"
 dmi.product_name = "FLIP KB"
 device = "ayaneo_flip_kb"
 variant = "KB"
+friendly_name = "AYANEO FLIP KB"
 
 [gpu_performance]
 driver = "amdgpu"

@@ -3,6 +3,7 @@ dmi.sys_vendor = "LENOVO"
 dmi.product_name = "83E1"
 device = "legion_go"
 variant = "83E1"
+friendly_name = "Legion Go"
 
 [[device]]
 dmi.sys_vendor = "LENOVO"
@@ -10,6 +11,7 @@ dmi.product_name = "83N0"
 # Legion Go 8ASP2 - Z2E SKU
 device = "legion_go_2"
 variant = "83N0"
+friendly_name = "Legion Go 2"
 
 [[device]]
 dmi.sys_vendor = "LENOVO"
@@ -17,6 +19,7 @@ dmi.product_name = "83N1"
 # Legion Go 8AHP2 - Z2 SKU
 device = "legion_go_2"
 variant = "83N1"
+friendly_name = "Legion Go 2"
 
 [gpu_performance]
 driver = "amdgpu"

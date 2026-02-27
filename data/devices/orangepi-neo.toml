@@ -3,6 +3,7 @@ dmi.sys_vendor = "OrangePi"
 dmi.product_name = "NEO-01"
 device = "orangepi_neo"
 variant = "NEO-01"
+friendly_name = "Orange Pi Neo"
 
 [gpu_performance]
 driver = "amdgpu"

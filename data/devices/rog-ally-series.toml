@@ -3,18 +3,21 @@ dmi.sys_vendor = "ASUSTeK COMPUTER INC."
 dmi.board_name = "RC71L"
 device = "rog_ally"
 variant = "RC71L"
+friendly_name = "ROG Ally"
 
 [[device]]
 dmi.sys_vendor = "ASUSTeK COMPUTER INC."
 dmi.board_name = "RC72LA"
 device = "rog_ally_x"
 variant = "RC72LA"
+friendly_name = "ROG Ally"
 
 [[device]]
 dmi.sys_vendor = "ASUSTeK COMPUTER INC."
 dmi.board_name = "RC73XA"
 device = "rog_xbox_ally_x"
 variant = "RC73XA"
+friendly_name = "ROG Xbox Ally"
 
 [gpu_performance]
 driver = "amdgpu"

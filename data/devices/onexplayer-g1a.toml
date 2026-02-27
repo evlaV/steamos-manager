@@ -3,6 +3,7 @@ dmi.sys_vendor = "ONE-NETBOOK"
 dmi.product_name = "ONEXPLAYER G1 A"
 device = "onexplayer_g1"
 variant = "G1 A"
+friendly_name = "ONEXPLAYER G1"
 
 [gpu_performance]
 driver = "amdgpu"

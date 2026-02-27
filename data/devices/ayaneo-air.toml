@@ -3,30 +3,28 @@ dmi.sys_vendor = "AYANEO"
 dmi.product_name = "AIR"
 device = "ayaneo_air"
 variant = "AIR"
+friendly_name = "AYANEO AIR"
 
 [[device]]
 dmi.sys_vendor = "AYANEO"
 dmi.product_name = "AIR Pro"
 device = "ayaneo_air"
 variant = "AIR Pro"
+friendly_name = "AYANEO AIR Pro"
 
 [[device]]
 dmi.sys_vendor = "AYANEO"
 dmi.product_name = "AIR 1S"
 device = "ayaneo_air_1s"
 variant = "AIR 1S"
+friendly_name = "AYANEO AIR 1S"
 
 [[device]]
 dmi.sys_vendor = "AYANEO"
 dmi.product_name = "AIR 1S Limited"
 device = "ayaneo_air_1s"
 variant = "AIR 1S Limited"
-
-[[device]]
-dmi.sys_vendor = "AYANEO"
-dmi.product_name = "AIR 1S Limited"
-device = "ayaneo_air_1s"
-variant = "AIR 1S Limited"
+friendly_name = "AYANEO AIR 1S"
 
 [[device]]
 dmi.sys_vendor = "AYANEO"
@@ -34,6 +32,7 @@ dmi.product_name = "AIR Plus"
 dmi.board_name = "AB05-AMD"
 device = "ayaneo_air_plus"
 variant = "AIR Plus"
+friendly_name = "AYANEO AIR +"
 
 [[device]]
 dmi.sys_vendor = "AYANEO"
@@ -41,6 +40,7 @@ dmi.product_name = "AIR Plus"
 dmi.board_name = "AB05-Mendocino"
 device = "ayaneo_air_plus"
 variant = "AIR Plus Mendocino"
+friendly_name = "AYANEO AIR +"
 
 [gpu_performance]
 driver = "amdgpu"

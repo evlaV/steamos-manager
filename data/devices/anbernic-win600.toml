@@ -3,6 +3,7 @@ dmi.sys_vendor = "Anbernic"
 dmi.product_name = "Win600"
 device = "anbernic_win600"
 variant = "Win600"
+friendly_name = "Anbernic Win600"
 
 [gpu_performance]
 driver = "amdgpu"

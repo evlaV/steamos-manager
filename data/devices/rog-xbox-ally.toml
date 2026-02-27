@@ -3,6 +3,7 @@ dmi.sys_vendor = "ASUSTeK COMPUTER INC."
 dmi.board_name = "RC73YA"
 device = "rog_xbox_ally"
 variant = "RC73YA"
+friendly_name = "ROG Xbox Ally"
 
 [tdp_limit]
 method = "amdgpu_hwmon"

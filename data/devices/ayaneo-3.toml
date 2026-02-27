@@ -3,6 +3,7 @@ dmi.sys_vendor = "AYANEO"
 dmi.product_name = "AYANEO 3"
 device = "ayaneo_3"
 variant = "3"
+friendly_name = "AYANEO 3"
 
 [gpu_performance]
 driver = "amdgpu"

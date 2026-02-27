@@ -3,18 +3,21 @@ dmi.sys_vendor = "Micro-Star International Co., Ltd."
 dmi.board_name = "MS-1T41"
 device = "claw"
 variant = "Claw A1M"
+friendly_name = "MSI Claw"
 
 [[device]]
 dmi.sys_vendor = "Micro-Star International Co., Ltd."
 dmi.board_name = "MS-1T42"
 device = "claw"
 variant = "Claw 7 AI+ A2VM"
+friendly_name = "MSI Claw"
 
 [[device]]
 dmi.sys_vendor = "Micro-Star International Co., Ltd."
 dmi.board_name = "MS-1T52"
 device = "claw"
 variant = "Claw 8 AI+ A2VM"
+friendly_name = "MSI Claw"
 
 [gpu_performance]
 driver = "intel"

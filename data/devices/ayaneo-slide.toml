@@ -3,6 +3,7 @@ dmi.sys_vendor = "AYANEO"
 dmi.product_name = "SLIDE"
 device = "ayaneo_slide"
 variant = "SLIDE"
+friendly_name = "AYANEO SLIDE"
 
 [gpu_performance]
 driver = "amdgpu"

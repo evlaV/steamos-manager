@@ -3,12 +3,14 @@ dmi.sys_vendor = "ZOTAC"
 dmi.board_name = "G0A1W"
 device = "zotac_gaming_zone"
 variant = "G0A1W"
+friendly_name = "Zotac ZONE"
 
 [[device]]
 dmi.sys_vendor = "ZOTAC"
 dmi.board_name = "G1A1W"
 device = "zotac_gaming_zone"
 variant = "G1A1W"
+friendly_name = "Zotac ZONE"
 
 [gpu_performance]
 driver = "amdgpu"
