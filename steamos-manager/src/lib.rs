@@ -145,16 +145,16 @@ impl SerialOrderValidator {
 }
 
 #[cfg(not(test))]
-pub fn path<S: AsRef<str>>(path: S) -> PathBuf {
+pub fn path<S: AsRef<Path>>(path: S) -> PathBuf {
     PathBuf::from(path.as_ref())
 }
 
 #[cfg(test)]
-pub fn path<S: AsRef<str>>(path: S) -> PathBuf {
+pub fn path<S: AsRef<Path>>(path: S) -> PathBuf {
     let current_test = crate::testing::current();
     let test_path = current_test.path();
     PathBuf::from(test_path.as_os_str().to_str().unwrap())
-        .join(path.as_ref().trim_start_matches('/'))
+        .join(path.as_ref().strip_prefix("/").unwrap_or(path.as_ref()))
 }
 
 pub(crate) async fn write_synced<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Result<()> {
