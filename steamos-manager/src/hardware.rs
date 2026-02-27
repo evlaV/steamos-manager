@@ -100,6 +100,8 @@ pub(crate) struct DeviceMatch {
     pub dmi: Option<DmiMatch>,
     pub device: String,
     pub variant: String,
+    pub friendly_name: Option<String>,
+    pub oui: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Debug)]

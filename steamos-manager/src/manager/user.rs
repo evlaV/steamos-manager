@@ -1917,6 +1917,8 @@ mod test {
                 }),
                 device: String::from("steam_deck"),
                 variant: String::from("Galileo"),
+                friendly_name: Some(String::from("Steam Deck")),
+                oui: Some(String::from("E0-31-9E")),
             }],
             tdp_limit: Some(TdpLimitConfig {
                 method: TdpLimitingMethod::AmdgpuHwmon,

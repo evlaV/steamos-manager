@@ -11,13 +11,20 @@ use cecd_proxy::Config1Proxy;
 use num_enum::TryFromPrimitive;
 use serde::Serialize;
 use std::fmt;
+use std::io::ErrorKind;
 use std::str::FromStr;
-use tokio::fs::{create_dir_all, write};
+use tokio::fs::{create_dir_all, remove_file, write};
 use toml;
 use xdg::BaseDirectories;
 use zbus::Connection;
 
+use crate::hardware::device_config;
+use crate::path;
 use crate::systemd::{EnableState, JobMode, SystemdUnit, daemon_reload};
+
+const CECD_CONFIG_DIR: &'static str = "cecd/config.d";
+const CECD_RUNTIME_CONFIG: &'static str = "99-steamos-manager.toml";
+const CECD_SYSTEM_CONFIG: &'static str = "00-steamos-manager.toml";
 
 #[derive(PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[repr(u32)]
@@ -66,6 +73,12 @@ struct CecdConfigFragment {
     pub uinput: bool,
 }
 
+#[derive(Serialize, Clone, Debug, Default)]
+struct CecdSystemFragment {
+    pub osd_name: Option<String>,
+    pub vendor_id: Option<String>, // TODO: Make this a VendorId once linux-cec 0.2 is tagged
+}
+
 enum HdmiCecBackend<'dbus> {
     Legacy {
         plasma_rc_unit: SystemdUnit<'dbus>,
@@ -85,6 +98,7 @@ impl<'dbus> HdmiCecControl<'dbus> {
             && proxy.wake_tv().await.is_ok()
         {
             // Prefer cecd if available
+            HdmiCecControl::configure_cecd(&proxy).await?;
             HdmiCecBackend::Cecd(proxy)
         } else {
             HdmiCecBackend::Legacy {
@@ -97,6 +111,37 @@ impl<'dbus> HdmiCecControl<'dbus> {
             backend,
             connection: connection.clone(),
         })
+    }
+
+    async fn configure_cecd(proxy: &Config1Proxy<'_>) -> Result<()> {
+        let Some(home) = BaseDirectories::new().get_config_home() else {
+            bail!("No home directory found");
+        };
+        let path = path(home.join(CECD_CONFIG_DIR));
+        // XXX: If we ever get async combinators, cleaning this up would be nice
+        let (osd_name, vendor_id) = if let Some(device_config) = device_config().await?
+            && let Some(device_match) = device_config.device_match().await?
+            && (device_match.friendly_name.is_some() || device_match.oui.is_some())
+        {
+            (device_match.friendly_name.clone(), device_match.oui.clone())
+        } else {
+            if let Err(err) = remove_file(path.join(CECD_SYSTEM_CONFIG)).await
+                && err.kind() != ErrorKind::NotFound
+            {
+                return Err(err.into());
+            }
+            return Ok(());
+        };
+        create_dir_all(&path).await?;
+        let path = path.join(CECD_SYSTEM_CONFIG);
+        let fragment = CecdSystemFragment {
+            osd_name,
+            vendor_id,
+        };
+        let fragment = toml::to_string(&fragment)?;
+        write(path, fragment.as_bytes()).await?;
+        proxy.reload().await?;
+        Ok(())
     }
 
     pub async fn get_enabled_state(&self) -> Result<HdmiCecState> {
@@ -168,9 +213,9 @@ impl<'dbus> HdmiCecControl<'dbus> {
                     bail!("No home directory found");
                 };
                 let fragment = toml::to_string(&fragment)?;
-                let path = home.join("cecd/config.d");
+                let path = home.join(CECD_CONFIG_DIR);
                 create_dir_all(&path).await?;
-                let path = path.join("99-steamos-manager.toml");
+                let path = path.join(CECD_RUNTIME_CONFIG);
                 write(path, fragment.as_bytes()).await?;
                 proxy.reload().await?;
             }
@@ -183,7 +228,14 @@ impl<'dbus> HdmiCecControl<'dbus> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    use std::collections::HashMap;
+    use tokio::fs::{try_exists, read_to_string};
+
     use crate::enum_roundtrip;
+    use crate::hardware::SteamDeckVariant;
+    use crate::hardware::test::fake_model;
+    use crate::testing;
 
     #[test]
     fn hdmi_cec_state_roundtrip() {
@@ -214,5 +266,66 @@ mod test {
         );
         assert!(HdmiCecState::try_from(3).is_err());
         assert!(HdmiCecState::from_str("working").is_err());
+    }
+
+    struct MockConfig;
+
+    #[zbus::interface(name = "com.steampowered.CecDaemon1.Config1")]
+    impl MockConfig {
+        async fn reload(&self) {}
+    }
+
+    #[tokio::test]
+    async fn test_system_config_none() {
+        let mut h = testing::start();
+        let connection = h.new_dbus().await.expect("dbus");
+        connection
+            .request_name("com.steampowered.CecDaemon1")
+            .await
+            .expect("request_name");
+        connection
+            .object_server()
+            .at("/com/steampowered/CecDaemon1/Daemon", MockConfig {})
+            .await
+            .expect("at");
+
+        let proxy = Config1Proxy::new(&connection).await.unwrap();
+
+        HdmiCecControl::configure_cecd(&proxy).await.unwrap();
+        assert!(
+            !try_exists(
+                path(BaseDirectories::new().get_config_home().unwrap()).join("cecd/config.d")
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_system_config_steam_deck() {
+        let mut h = testing::start();
+        let connection = h.new_dbus().await.expect("dbus");
+        connection
+            .request_name("com.steampowered.CecDaemon1")
+            .await
+            .expect("request_name");
+        connection
+            .object_server()
+            .at("/com/steampowered/CecDaemon1/Daemon", MockConfig {})
+            .await
+            .expect("at");
+
+        let proxy = Config1Proxy::new(&connection).await.unwrap();
+        fake_model(SteamDeckVariant::Jupiter).await.unwrap();
+
+        HdmiCecControl::configure_cecd(&proxy).await.unwrap();
+        let path = path(BaseDirectories::new().get_config_home().unwrap())
+            .join(CECD_CONFIG_DIR)
+            .join(CECD_SYSTEM_CONFIG);
+        let config = read_to_string(path).await.unwrap();
+        let config = toml::from_str::<HashMap<String, String>>(config.as_str())
+            .unwrap();
+        assert_eq!(config.get("osd_name").unwrap(), "Steam Deck");
+        assert_eq!(config.get("vendor_id").unwrap(), "e0-31-9e");
     }
 }
