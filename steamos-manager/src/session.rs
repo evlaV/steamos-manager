@@ -11,6 +11,7 @@ use anyhow::anyhow;
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
+use std::io::ErrorKind;
 use strum::{Display, EnumString};
 #[cfg(test)]
 use tokio::fs::{create_dir_all, write};
@@ -19,6 +20,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::{broadcast, oneshot};
 use tokio_stream::StreamExt;
 use tracing::debug;
+use xdg::BaseDirectories;
 use zbus::proxy::PropertyChanged;
 use zbus::{Connection, fdo};
 
@@ -116,8 +118,16 @@ fn is_valid_desktop_session_name(path: &str) -> bool {
 
 pub(crate) async fn valid_desktop_sessions() -> Result<Vec<String>> {
     let mut sessions = Vec::new();
-    for dir in &["/usr/share/wayland-sessions/", "/usr/share/xsessions/"] {
-        let mut entries = read_dir(path(dir)).await?;
+    for dir in BaseDirectories::new()
+        .data_dirs
+        .into_iter()
+        .flat_map(|dir| [dir.join("wayland-sessions"), dir.join("xsessions")])
+    {
+        let mut entries = match read_dir(path(dir)).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(err) => return Err(err.into()),
+        };
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             let Some(name) = path.file_name().and_then(OsStr::to_str) else {
@@ -136,7 +146,11 @@ pub(crate) async fn is_valid_desktop_session(session: &str) -> Result<bool> {
     if !is_valid_desktop_session_name(session) {
         return Ok(false);
     }
-    for dir in &["/usr/share/wayland-sessions/", "/usr/share/xsessions/"] {
+    for dir in BaseDirectories::new()
+        .data_dirs
+        .into_iter()
+        .flat_map(|dir| [dir.join("wayland-sessions"), dir.join("xsessions")])
+    {
         if try_exists(path(dir).join(session)).await? {
             return Ok(true);
         }
