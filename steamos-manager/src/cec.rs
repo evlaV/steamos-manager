@@ -22,9 +22,9 @@ use crate::hardware::device_config;
 use crate::path;
 use crate::systemd::{EnableState, JobMode, SystemdUnit, daemon_reload};
 
-const CECD_CONFIG_DIR: &'static str = "cecd/config.d";
-const CECD_RUNTIME_CONFIG: &'static str = "99-steamos-manager.toml";
-const CECD_SYSTEM_CONFIG: &'static str = "00-steamos-manager.toml";
+const CECD_CONFIG_DIR: &str = "cecd/config.d";
+const CECD_RUNTIME_CONFIG: &str = "99-steamos-manager.toml";
+const CECD_SYSTEM_CONFIG: &str = "00-steamos-manager.toml";
 
 #[derive(PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[repr(u32)]
@@ -230,7 +230,7 @@ mod test {
     use super::*;
 
     use std::collections::HashMap;
-    use tokio::fs::{try_exists, read_to_string};
+    use tokio::fs::{read_to_string, try_exists};
 
     use crate::enum_roundtrip;
     use crate::hardware::SteamDeckVariant;
@@ -323,8 +323,7 @@ mod test {
             .join(CECD_CONFIG_DIR)
             .join(CECD_SYSTEM_CONFIG);
         let config = read_to_string(path).await.unwrap();
-        let config = toml::from_str::<HashMap<String, String>>(config.as_str())
-            .unwrap();
+        let config = toml::from_str::<HashMap<String, String>>(config.as_str()).unwrap();
         assert_eq!(config.get("osd_name").unwrap(), "Steam Deck");
         assert_eq!(config.get("vendor_id").unwrap(), "e0-31-9e");
     }
