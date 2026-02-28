@@ -3187,6 +3187,7 @@ mod test {
             .unwrap();
         assert_eq!(proxy.tdp_limit().await.unwrap(), 10);
         let fd = low_power_proxy.enter_download_mode("foo").await.unwrap();
+        sleep(Duration::from_millis(5)).await;
         assert_eq!(proxy.tdp_limit().await.unwrap(), 5);
         assert_eq!(remote.get().await.limit, 5);
         drop(fd);
