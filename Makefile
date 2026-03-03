@@ -7,13 +7,13 @@ target/release/steamos-manager: build
 target/release/steamosctl: build
 
 build:
-	@cargo build -r --target-dir target
+	@cargo $(CARGOFLAGS) build -r --target-dir target
 
 clean:
-	@cargo clean
+	@cargo $(CARGOFLAGS) clean
 
 test:
-	@cargo test
+	@cargo $(CARGOFLAGS) test
 
 install: target/release/steamos-manager target/release/steamosctl
 	install -d -m0755 "$(DESTDIR)/usr/share/dbus-1/interfaces/"
