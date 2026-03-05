@@ -415,7 +415,7 @@ async fn main() -> Result<()> {
     let conn = Connection::session().await?;
 
     // Then process arguments
-    match &args.command {
+    match args.command {
         Commands::GetAllProperties => {
             get_all_properties(&conn).await?;
         }
@@ -436,7 +436,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetFanControlState { state } => {
             let proxy = FanControl1Proxy::new(&conn).await?;
-            proxy.set_fan_control_state(*state as u32).await?;
+            proxy.set_fan_control_state(state as u32).await?;
         }
         Commands::GetFanControlState => {
             let proxy = FanControl1Proxy::new(&conn).await?;
@@ -502,7 +502,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetCpuBoostState { state } => {
             let proxy = CpuBoost1Proxy::new(&conn).await?;
-            proxy.set_cpu_boost_state(*state as u32).await?;
+            proxy.set_cpu_boost_state(state as u32).await?;
         }
         Commands::GetAvailableGPUPowerProfiles => {
             let proxy = GpuPowerProfile1Proxy::new(&conn).await?;
@@ -536,7 +536,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetManualGPUClock { freq } => {
             let proxy = GpuPerformanceLevel1Proxy::new(&conn).await?;
-            proxy.set_manual_gpu_clock(*freq).await?;
+            proxy.set_manual_gpu_clock(freq).await?;
         }
         Commands::GetManualGPUClock => {
             let proxy = GpuPerformanceLevel1Proxy::new(&conn).await?;
@@ -577,7 +577,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetTDPLimit { limit } => {
             let proxy = TdpLimit1Proxy::new(&conn).await?;
-            proxy.set_tdp_limit(*limit).await?;
+            proxy.set_tdp_limit(limit).await?;
         }
         Commands::GetTDPLimit => {
             let proxy = TdpLimit1Proxy::new(&conn).await?;
@@ -611,10 +611,10 @@ async fn main() -> Result<()> {
             let mut options = HashMap::<&str, &zvariant::Value<'_>>::new();
             let buffer_size;
             if let Some(size) = buffer {
-                buffer_size = Some(zvariant::Value::U32(*size));
+                buffer_size = Some(zvariant::Value::U32(size));
                 options.insert("buffer_size", buffer_size.as_ref().unwrap());
             }
-            proxy.set_wifi_debug_mode(*mode as u32, options).await?;
+            proxy.set_wifi_debug_mode(mode as u32, options).await?;
         }
         Commands::GetWifiDebugMode => {
             let proxy = WifiDebug1Proxy::new(&conn).await?;
@@ -631,7 +631,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetWifiPowerManagementState { state } => {
             let proxy = WifiPowerManagement1Proxy::new(&conn).await?;
-            proxy.set_wifi_power_management_state(*state as u32).await?;
+            proxy.set_wifi_power_management_state(state as u32).await?;
         }
         Commands::GetWifiPowerManagementState => {
             let proxy = WifiPowerManagement1Proxy::new(&conn).await?;
@@ -648,7 +648,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetHdmiCecState { state } => {
             let proxy = HdmiCec1Proxy::new(&conn).await?;
-            proxy.set_hdmi_cec_state(*state as u32).await?;
+            proxy.set_hdmi_cec_state(state as u32).await?;
         }
         Commands::GetHdmiCecState => {
             let proxy = HdmiCec1Proxy::new(&conn).await?;
@@ -675,7 +675,7 @@ async fn main() -> Result<()> {
         }
         Commands::PrepareFactoryReset { kind } => {
             let proxy = FactoryReset1Proxy::new(&conn).await?;
-            let _ = proxy.prepare_factory_reset(*kind as u32).await?;
+            let _ = proxy.prepare_factory_reset(kind as u32).await?;
         }
         Commands::TrimDevices => {
             let proxy = Storage1Proxy::new(&conn).await?;
@@ -688,7 +688,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetMaxChargeLevel { level } => {
             let proxy = BatteryChargeLimit1Proxy::new(&conn).await?;
-            proxy.set_max_charge_level(*level).await?;
+            proxy.set_max_charge_level(level).await?;
         }
         Commands::SuggestedMinimumChargeLimit => {
             let proxy = BatteryChargeLimit1Proxy::new(&conn).await?;
@@ -712,7 +712,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetScreenReaderEnabled { enable } => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            proxy.set_enabled(*enable).await?;
+            proxy.set_enabled(enable).await?;
         }
         Commands::GetScreenReaderRate => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
@@ -721,7 +721,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetScreenReaderRate { rate } => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            proxy.set_rate(*rate).await?;
+            proxy.set_rate(rate).await?;
         }
         Commands::GetScreenReaderPitch => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
@@ -730,7 +730,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetScreenReaderPitch { pitch } => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            proxy.set_pitch(*pitch).await?;
+            proxy.set_pitch(pitch).await?;
         }
         Commands::GetScreenReaderVolume => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
@@ -739,7 +739,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetScreenReaderVolume { volume } => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            proxy.set_volume(*volume).await?;
+            proxy.set_volume(volume).await?;
         }
         Commands::GetScreenReaderMode => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
@@ -776,7 +776,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetScreenReaderLocale { locale } => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            proxy.set_voice_locale(locale).await?;
+            proxy.set_voice_locale(&locale).await?;
         }
         Commands::GetScreenReaderVoices => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
@@ -788,7 +788,7 @@ async fn main() -> Result<()> {
         }
         Commands::GetScreenReaderVoicesForLocale { locale } => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            let voices = proxy.get_voices_for_locale(locale).await?;
+            let voices = proxy.get_voices_for_locale(&locale).await?;
             println!("Voices for locale '{locale}':\n");
             for voice in voices.iter().sorted() {
                 println!("- {voice}");
@@ -801,7 +801,7 @@ async fn main() -> Result<()> {
         }
         Commands::SetScreenReaderVoice { voice } => {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
-            proxy.set_voice(voice).await?;
+            proxy.set_voice(&voice).await?;
         }
         Commands::SwitchToDesktopMode => {
             let proxy = SessionManagement1Proxy::new(&conn).await?;
