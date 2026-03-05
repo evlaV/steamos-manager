@@ -10,7 +10,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use itertools::Itertools;
 use nix::time::{ClockId, clock_gettime};
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{Cursor, stderr};
 use steamos_manager::audio::Mode;
 use steamos_manager::cec::HdmiCecState;
 use steamos_manager::hardware::{FactoryResetKind, FanControlState};
@@ -26,6 +26,9 @@ use steamos_manager::proxy::{
 use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
 use steamos_manager::wifi::{WifiBackend, WifiDebugMode, WifiPowerManagement};
+use tracing::subscriber::set_global_default;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, Registry, fmt};
 use zbus::fdo::{IntrospectableProxy, PropertiesProxy};
 use zbus::{Connection, zvariant};
 use zbus_xml::Node;
@@ -406,15 +409,14 @@ async fn get_all_properties(conn: &Connection) -> Result<()> {
 #[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<()> {
-    // This is a command-line utility that calls api using dbus
+    let stderr_log = fmt::layer().with_writer(stderr);
+    let subscriber = Registry::default()
+        .with(stderr_log)
+        .with(EnvFilter::from_default_env());
+    set_global_default(subscriber)?;
 
-    // First set up which command line arguments we support
     let args = Args::parse();
-
-    // Then get a connection to the service
     let conn = Connection::session().await?;
-
-    // Then process arguments
     match args.command {
         Commands::GetAllProperties => {
             get_all_properties(&conn).await?;
