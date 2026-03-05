@@ -43,4 +43,5 @@ install: target/release/steamos-manager target/release/steamosctl
 	install -m644 "data/user/com.steampowered.SteamOSManager1.service" "$(DESTDIR)/usr/share/dbus-1/services/"
 	install -m644 "data/user/steamos-manager.service" "$(DESTDIR)/usr/lib/systemd/user/"
 	install -m644 "data/user/steamos-manager-session-cleanup.service" "$(DESTDIR)/usr/lib/systemd/user/"
+	install -m644 "data/user/steamos-manager-configure-cecd.service" "$(DESTDIR)/usr/lib/systemd/user/"
 	install -m644 "data/user/orca.service" "$(DESTDIR)/usr/lib/systemd/user/"

@@ -1,0 +1,10 @@
+[Unit]
+Description=SteamOS Manager cecd configurator
+Before=cecd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/steamosctl configure-cecd
+
+[Install]
+WantedBy=cecd.service

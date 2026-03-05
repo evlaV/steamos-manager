@@ -210,7 +210,9 @@ impl DeviceConfig {
     }
 
     async fn load() -> Result<Option<DeviceConfig>> {
-        let mut dir = read_dir(DEVICE_CONFIG_PATH).await?;
+        let mut dir = read_dir(DEVICE_CONFIG_PATH)
+            .await
+            .inspect_err(|err| error!("Failed to scan device configs: {err}"))?;
         while let Some(config) = dir.next_entry().await? {
             let path = config.path();
             if let Some(ext) = path.extension() {

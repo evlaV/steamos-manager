@@ -5,14 +5,15 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{ArgAction, Parser, Subcommand};
 use itertools::Itertools;
 use nix::time::{ClockId, clock_gettime};
 use std::collections::HashMap;
 use std::io::{Cursor, stderr};
+use std::path::PathBuf;
 use steamos_manager::audio::Mode;
-use steamos_manager::cec::HdmiCecState;
+use steamos_manager::cec::{HdmiCecControl, HdmiCecState};
 use steamos_manager::hardware::{FactoryResetKind, FanControlState};
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
@@ -29,6 +30,7 @@ use steamos_manager::wifi::{WifiBackend, WifiDebugMode, WifiPowerManagement};
 use tracing::subscriber::set_global_default;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry, fmt};
+use xdg::BaseDirectories;
 use zbus::fdo::{IntrospectableProxy, PropertiesProxy};
 use zbus::{Connection, zvariant};
 use zbus_xml::Node;
@@ -367,6 +369,10 @@ enum Commands {
     #[command(hide = true)]
     // This is an internal-only command that isn't useful for end-users
     CleanTemporarySessions,
+
+    #[command(hide = true)]
+    // This is an internal-only command that isn't useful for end-users
+    ConfigureCecd { path: Option<PathBuf> },
 }
 
 async fn get_all_properties(conn: &Connection) -> Result<()> {
@@ -850,6 +856,12 @@ async fn main() -> Result<()> {
         Commands::CleanTemporarySessions => {
             let proxy = SessionManagement1Proxy::new(&conn).await?;
             proxy.clean_temporary_sessions().await?;
+        }
+        Commands::ConfigureCecd { path } => {
+            let Some(path) = path.or_else(|| BaseDirectories::new().get_config_home()) else {
+                bail!("No home directory found");
+            };
+            HdmiCecControl::configure_cecd(path).await?;
         }
     }
 
