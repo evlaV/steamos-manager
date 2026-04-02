@@ -15,7 +15,7 @@ use tracing::error;
 use tracing::subscriber::set_global_default;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry, fmt};
-use zbus::connection::{Builder, Connection};
+use zbus::connection::Connection;
 
 use crate::daemon::{Daemon, DaemonCommand, DaemonContext, channel};
 use crate::ds_inhibit::Inhibitor;
@@ -169,10 +169,7 @@ impl DaemonContext for RootContext {
 pub(crate) type Command = DaemonCommand<RootCommand>;
 
 async fn create_connection() -> Result<Connection> {
-    Ok(Builder::system()?
-        .name("com.steampowered.SteamOSManager1")?
-        .build()
-        .await?)
+    Ok(Connection::system().await?)
 }
 
 pub async fn daemon() -> Result<()> {

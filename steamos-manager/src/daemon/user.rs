@@ -20,7 +20,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry, fmt};
 #[cfg(not(test))]
 use xdg::BaseDirectories;
-use zbus::connection::{Builder, Connection};
+use zbus::connection::Connection;
 use zbus::fdo::PeerProxy;
 
 use crate::daemon::{Daemon, DaemonCommand, DaemonContext, channel};
@@ -147,10 +147,7 @@ async fn create_connections() -> Result<(Connection, Connection)> {
             _ = sleep(Duration::from_secs(1)) => (),
         }
     }
-    let connection = Builder::session()?
-        .name("com.steampowered.SteamOSManager1")?
-        .build()
-        .await?;
+    let connection = Connection::session().await?;
 
     Ok((connection, system))
 }

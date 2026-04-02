@@ -162,9 +162,12 @@ impl<C: DaemonContext> Daemon<C> {
         debug!("Starting daemon with state: {state:#?}, config: {config:#?}");
         context.start(state, config, self).await?;
 
-        let object_server = self.connection.object_server().clone();
+        let connection = self.connection.clone();
         self.services.spawn(async move {
-            object_server.at("/", ObjectManager {}).await?;
+            connection.object_server().at("/", ObjectManager {}).await?;
+            connection
+                .request_name("com.steampowered.SteamOSManager1")
+                .await?;
 
             // Tell systemd we're done loading
             let mut notify_socket = NotifySocket::default();

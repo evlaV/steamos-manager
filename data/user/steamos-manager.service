@@ -4,7 +4,7 @@ StartLimitIntervalSec=120
 StartLimitBurst=5
 
 [Service]
-Type=notify-reload
+Type=dbus
 BusName=com.steampowered.SteamOSManager1
 Environment=RUST_LOG=info
 ExecStart=/usr/lib/steamos-manager
