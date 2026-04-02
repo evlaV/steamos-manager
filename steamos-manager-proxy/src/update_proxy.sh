@@ -1,5 +1,4 @@
 zbus-xmlgen file ../../data/interfaces/com.steampowered.SteamOSManager1.xml
-zbus-xmlgen file ../../data/interfaces/com.steampowered.SteamOSManager1.Manager.xml
 
 for f in *.rs; do
     if [[ $f == "lib.rs" ]]; then
