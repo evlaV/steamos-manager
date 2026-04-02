@@ -393,16 +393,17 @@ async fn get_all_properties(conn: &Connection) -> Result<()> {
 
     let mut properties = HashMap::new();
     for interface in introspection.interfaces() {
-        let name = match interface.name() {
-            name if name
-                .as_str()
-                .starts_with("com.steampowered.SteamOSManager1") =>
-            {
-                name
-            }
-            _ => continue,
+        let fq_name = interface.name();
+        let Some(name) = fq_name.strip_prefix("com.steampowered.SteamOSManager1.") else {
+            continue;
         };
-        properties.extend(properties_proxy.get_all(name).await?);
+        properties.extend(
+            properties_proxy
+                .get_all(fq_name.clone())
+                .await?
+                .into_iter()
+                .map(|(k, v)| (format!("{name}.{k}"), v)),
+        );
     }
     for key in properties.keys().sorted() {
         let value = &properties[key];
