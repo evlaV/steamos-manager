@@ -20,6 +20,7 @@ use tokio::sync::OnceCell;
 use tracing::{debug, error};
 use zbus::Connection;
 
+use crate::cec::HdmiCecHardware;
 use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
@@ -90,6 +91,7 @@ pub(crate) struct DeviceConfig {
     pub battery_charge_limit: Option<BatteryChargeLimitConfig>,
     pub performance_profile: Option<PerformanceProfileConfig>,
     pub inputplumber: Option<InputPlumberConfig>,
+    pub cec_hw: Option<HdmiCecConfig>,
 }
 
 #[derive(Clone, Default, Deserialize, Debug)]
@@ -130,6 +132,12 @@ pub(crate) struct GpuPerformanceConfig {
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct GpuPowerProfileConfig {
     pub driver: GpuPowerProfileDriverType,
+}
+
+#[derive(Clone, Default, Deserialize, Debug)]
+#[serde(default)]
+pub(crate) struct HdmiCecConfig {
+    pub hardware: Option<HdmiCecHardware>,
 }
 
 #[derive(Clone, Deserialize, Debug, Default)]

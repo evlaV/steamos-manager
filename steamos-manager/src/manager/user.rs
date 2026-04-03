@@ -28,7 +28,7 @@ use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 use steamos_manager_macros::{RemoteManager, remote};
 
 use crate::audio::{AudioManager, Mode};
-use crate::cec::{HdmiCecControl, HdmiCecState};
+use crate::cec::{CecdService, HdmiCecControl, HdmiCecState};
 use crate::daemon::DaemonCommand;
 use crate::daemon::user::Command;
 use crate::error::{to_zbus_error, to_zbus_fdo_error, zbus_to_zbus_fdo};
@@ -1617,17 +1617,20 @@ async fn create_device_interfaces(
     Ok(())
 }
 
+pub(crate) struct UserServices {
+    pub signal_relay: SignalRelayService,
+    pub session_manager: Option<SessionManagerService>,
+    pub screenreader_setup: Option<ScreenReaderSetupService>,
+    pub cecd: Result<CecdService>,
+}
+
 pub(crate) async fn create_interfaces(
     session: Connection,
     system: Connection,
     daemon: Sender<Command>,
     job_manager: UnboundedSender<JobManagerCommand>,
     tdp_manager: Option<UnboundedSender<TdpManagerCommand>>,
-) -> Result<(
-    SignalRelayService,
-    Option<SessionManagerService>,
-    Option<ScreenReaderSetupService>,
-)> {
+) -> Result<UserServices> {
     let proxy = Builder::<Proxy>::new(&system)
         .destination("com.steampowered.SteamOSManager1")?
         .path("/com/steampowered/SteamOSManager1")?
@@ -1657,7 +1660,10 @@ pub(crate) async fn create_interfaces(
         proxy: proxy.clone(),
         order: SerialOrderValidator::default(),
     };
+
     let hdmi_cec = HdmiCec1::new(&session).await?;
+    let cecd_service = CecdService::new(&system, &hdmi_cec.hdmi_cec).await;
+
     let manager2 = Manager2 {
         proxy: proxy.clone(),
         channel: daemon.clone(),
@@ -1798,14 +1804,15 @@ pub(crate) async fn create_interfaces(
     remote_interface.configure(&remote_config).await?;
     object_server.at(MANAGER_PATH, remote_interface).await?;
 
-    Ok((
-        SignalRelayService {
+    Ok(UserServices {
+        signal_relay: SignalRelayService {
             proxy,
             session: session.clone(),
         },
-        session_manager_service,
-        screenreader_setup_service,
-    ))
+        session_manager: session_manager_service,
+        screenreader_setup: screenreader_setup_service,
+        cecd: cecd_service,
+    })
 }
 
 #[cfg(test)]
@@ -1953,6 +1960,7 @@ mod test {
                 suggested_default: String::from("balanced"),
             }),
             inputplumber: None,
+            cec_hw: None,
         })
     }
 

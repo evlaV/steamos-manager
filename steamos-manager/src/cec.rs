@@ -6,22 +6,29 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{Error, Result, bail};
-use cecd_proxy::Config1Proxy;
-use linux_cec::VendorId;
+use anyhow::{Error, Result, bail, ensure};
+use async_trait::async_trait;
+use cecd_proxy::{CecDevice1Proxy, Config1Proxy};
+use linux_cec::{PhysicalAddress, VendorId};
 use num_enum::TryFromPrimitive;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::str::FromStr;
-use tokio::fs::{create_dir_all, remove_file, write};
+use strum::{Display, EnumString, VariantNames};
+use tokio::fs::{File, create_dir_all, remove_file, write};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio_stream::StreamExt;
 use toml;
 use xdg::BaseDirectories;
 use zbus::Connection;
+use zbus::fdo::ObjectManagerProxy;
 
 use crate::hardware::device_config;
+use crate::manager::root::RootManagerProxy;
 use crate::systemd::{EnableState, JobMode, SystemdUnit, daemon_reload};
+use crate::{Service, path};
 
 const CECD_CONFIG_DIR: &str = "cecd/config.d";
 const CECD_RUNTIME_CONFIG: &str = "99-steamos-manager.toml";
@@ -33,6 +40,22 @@ pub enum HdmiCecState {
     Disabled = 0,
     ControlOnly = 1,
     ControlAndWake = 2,
+}
+
+#[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum HdmiCecHardware {
+    CrosEc { port: u8 },
+}
+
+#[async_trait]
+pub(crate) trait HdmiCecHwController: Send + Sync {
+    async fn can_awaken(&self) -> Result<bool>;
+    async fn get_awaken(&self) -> Result<bool>;
+    async fn set_awaken(&self, _awaken: bool) -> Result<()>;
+    async fn get_phys_addr(&self) -> Result<PhysicalAddress>;
+    async fn set_phys_addr(&self, phys_addr: PhysicalAddress) -> Result<()>;
 }
 
 impl FromStr for HdmiCecState {
@@ -221,12 +244,201 @@ impl<'dbus> HdmiCecControl<'dbus> {
     }
 }
 
+pub(crate) async fn cec_hw_controller() -> Result<Box<dyn HdmiCecHwController>> {
+    let config = device_config().await?;
+    let Some(config) = config
+        .as_ref()
+        .and_then(|config| config.cec_hw.as_ref())
+        .and_then(|config| config.hardware.as_ref())
+    else {
+        bail!("HDMI CEC hardware not configured");
+    };
+    let hw = match config {
+        HdmiCecHardware::CrosEc { port } => Box::new(CrosEcHwController { port: *port }),
+    };
+    if !hw.can_awaken().await? {
+        bail!("HDMI CEC hardware not supported");
+    }
+    Ok(hw)
+}
+
+struct CrosEcHwController {
+    port: u8,
+}
+
+impl CrosEcHwController {
+    const BASE: &str = "/sys/class/chromeos/cros_ec/";
+    const WAKE_ENABLE: &str = "cec_wake_enable";
+    const PHYS_ADDR: &str = "cec_phys_addr";
+}
+
+#[async_trait]
+impl HdmiCecHwController for CrosEcHwController {
+    async fn can_awaken(&self) -> Result<bool> {
+        let wake_enable = BufReader::new(
+            File::open(path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE))
+                .await?,
+        );
+        let mut lines = wake_enable.lines();
+        while let Some(line) = lines.next_line().await? {
+            let Some((port, _)) = line.split_once(' ') else {
+                continue;
+            };
+            let Ok(port) = port.parse::<u8>() else {
+                continue;
+            };
+            if port != self.port {
+                continue;
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    async fn get_awaken(&self) -> Result<bool> {
+        let wake_enable = BufReader::new(
+            File::open(path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE))
+                .await?,
+        );
+        let mut lines = wake_enable.lines();
+        while let Some(line) = lines.next_line().await? {
+            let Some((port, enable)) = line.split_once(' ') else {
+                continue;
+            };
+            let Ok(port) = port.parse::<u8>() else {
+                continue;
+            };
+            if port != self.port {
+                continue;
+            }
+            return Ok(enable == "1");
+        }
+        bail!("Port not found");
+    }
+
+    async fn set_awaken(&self, awaken: bool) -> Result<()> {
+        let line = format!("{} {}\n", self.port, if awaken { 1 } else { 0 });
+        Ok(write(
+            path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE),
+            line,
+        )
+        .await?)
+    }
+
+    async fn get_phys_addr(&self) -> Result<PhysicalAddress> {
+        let wake_enable = BufReader::new(
+            File::open(path(CrosEcHwController::BASE).join(CrosEcHwController::PHYS_ADDR)).await?,
+        );
+        let mut lines = wake_enable.lines();
+        while let Some(line) = lines.next_line().await? {
+            let Some((port, phys_addr)) = line.split_once(' ') else {
+                continue;
+            };
+            let Ok(port) = port.parse::<u8>() else {
+                continue;
+            };
+            if port != self.port {
+                continue;
+            }
+            let phys_addr = phys_addr.parse::<u16>()?;
+            return Ok(PhysicalAddress::from(phys_addr));
+        }
+        bail!("Port not found");
+    }
+
+    async fn set_phys_addr(&self, phys_addr: PhysicalAddress) -> Result<()> {
+        let line = format!("{} {}\n", self.port, u16::from(phys_addr));
+        Ok(write(
+            path(CrosEcHwController::BASE).join(CrosEcHwController::PHYS_ADDR),
+            line,
+        )
+        .await?)
+    }
+}
+
+pub(crate) struct CecdService {
+    manager: RootManagerProxy<'static>,
+    device: CecDevice1Proxy<'static>,
+}
+
+impl CecdService {
+    pub(crate) async fn new(
+        system: &Connection,
+        hdmi_cec: &HdmiCecControl<'_>,
+    ) -> Result<CecdService> {
+        let manager = RootManagerProxy::new(system).await?;
+        ensure!(
+            manager.hdmi_cec_can_awaken().await?,
+            "No supported cec hardware backend found"
+        );
+        ensure!(
+            matches!(&hdmi_cec.backend, HdmiCecBackend::Cecd(_)),
+            "Not using cecd"
+        );
+        let object_manager = ObjectManagerProxy::new(
+            &hdmi_cec.connection,
+            "com.steampowered.CecDaemon1",
+            "/com/steampowered/CecDaemon1",
+        )
+        .await?;
+
+        let mut device = None;
+        for (path, ifaces) in object_manager.get_managed_objects().await? {
+            if !path
+                .as_str()
+                .starts_with("/com/steampowered/CecDaemon1/Devices")
+            {
+                continue;
+            }
+            if !ifaces.contains_key("com.steampowered.CecDaemon1.CecDevice1") {
+                continue;
+            }
+            device = Some(
+                CecDevice1Proxy::builder(&hdmi_cec.connection)
+                    .path(path)?
+                    .build()
+                    .await?,
+            );
+        }
+
+        let Some(device) = device else {
+            bail!("No CEC device found");
+        };
+
+        Ok(CecdService { manager, device })
+    }
+
+    async fn reconfigure(&self) -> Result<()> {
+        let phys_addr = self.device.physical_address().await?;
+        self.manager.set_hdmi_cec_phys_addr(phys_addr).await?;
+        Ok(())
+    }
+}
+
+impl Service for CecdService {
+    const NAME: &'static str = "cecd-listener";
+
+    async fn run(&mut self) -> Result<()> {
+        let mut phys_addr_changed = self.device.receive_physical_address_changed().await;
+        loop {
+            self.reconfigure().await?;
+
+            let Some(_) = phys_addr_changed.next().await else {
+                break;
+            };
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     use std::collections::HashMap;
     use tokio::fs::{read_to_string, try_exists};
+    use zbus::fdo::{self, ObjectManager};
+    use zbus::{ObjectServer, interface};
 
     use crate::hardware::SteamDeckVariant;
     use crate::hardware::test::fake_model;
@@ -284,5 +496,351 @@ mod test {
         let config = toml::from_str::<HashMap<String, String>>(config.as_str()).unwrap();
         assert_eq!(config.get("osd_name").unwrap(), "Steam Deck");
         assert_eq!(config.get("vendor_id").unwrap(), "e0-31-9e");
+    }
+
+    #[tokio::test]
+    async fn test_cros_get_awaken() {
+        let _h = testing::start();
+
+        create_dir_all(path(CrosEcHwController::BASE))
+            .await
+            .unwrap();
+        let cros_ec = CrosEcHwController { port: 0 };
+
+        write(
+            path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE),
+            "0 1\n",
+        )
+        .await
+        .unwrap();
+        assert!(cros_ec.get_awaken().await.unwrap());
+
+        write(
+            path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE),
+            "0 0\n",
+        )
+        .await
+        .unwrap();
+        assert!(!cros_ec.get_awaken().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_cros_get_awaken_no_port() {
+        let _h = testing::start();
+
+        create_dir_all(path(CrosEcHwController::BASE))
+            .await
+            .unwrap();
+        let cros_ec = CrosEcHwController { port: 1 };
+
+        write(
+            path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE),
+            "0 1\n",
+        )
+        .await
+        .unwrap();
+        assert!(cros_ec.get_awaken().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_cros_set_awaken() {
+        let _h = testing::start();
+
+        create_dir_all(path(CrosEcHwController::BASE))
+            .await
+            .unwrap();
+        let cros_ec = CrosEcHwController { port: 0 };
+
+        cros_ec.set_awaken(true).await.unwrap();
+        assert_eq!(
+            read_to_string(path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE))
+                .await
+                .unwrap(),
+            "0 1\n"
+        );
+
+        cros_ec.set_awaken(false).await.unwrap();
+        assert_eq!(
+            read_to_string(path(CrosEcHwController::BASE).join(CrosEcHwController::WAKE_ENABLE))
+                .await
+                .unwrap(),
+            "0 0\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cros_get_phys_addr() {
+        let _h = testing::start();
+
+        create_dir_all(path(CrosEcHwController::BASE))
+            .await
+            .unwrap();
+        let cros_ec = CrosEcHwController { port: 0 };
+
+        write(
+            path(CrosEcHwController::BASE).join(CrosEcHwController::PHYS_ADDR),
+            "0 4660\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cros_ec.get_phys_addr().await.unwrap(),
+            PhysicalAddress::from(0x1234)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cros_get_phys_addr_no_port() {
+        let _h = testing::start();
+
+        create_dir_all(path(CrosEcHwController::BASE))
+            .await
+            .unwrap();
+        let cros_ec = CrosEcHwController { port: 1 };
+
+        write(
+            path(CrosEcHwController::BASE).join(CrosEcHwController::PHYS_ADDR),
+            "0 4660\n",
+        )
+        .await
+        .unwrap();
+        assert!(cros_ec.get_phys_addr().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_cros_set_phys_addr() {
+        let _h = testing::start();
+
+        create_dir_all(path(CrosEcHwController::BASE))
+            .await
+            .unwrap();
+        let cros_ec = CrosEcHwController { port: 0 };
+
+        cros_ec
+            .set_phys_addr(PhysicalAddress::from(0x1234))
+            .await
+            .unwrap();
+        assert_eq!(
+            read_to_string(path(CrosEcHwController::BASE).join(CrosEcHwController::PHYS_ADDR))
+                .await
+                .unwrap(),
+            "0 4660\n"
+        );
+    }
+
+    #[derive(Debug)]
+    struct MockCecHw {
+        can_awaken: bool,
+        phys_addr: u16,
+        awaken: bool,
+    }
+
+    #[interface(name = "com.steampowered.SteamOSManager1.RootManager")]
+    impl MockCecHw {
+        #[zbus(property)]
+        fn hdmi_cec_can_awaken(&self) -> bool {
+            self.can_awaken
+        }
+
+        #[zbus(property)]
+        fn hdmi_cec_awaken(&self) -> fdo::Result<bool> {
+            if !self.can_awaken {
+                return Err(fdo::Error::Failed(String::new()));
+            }
+            Ok(self.awaken)
+        }
+
+        #[zbus(property)]
+        fn set_hdmi_cec_awaken(&mut self, awaken: bool) -> fdo::Result<()> {
+            if !self.can_awaken {
+                return Err(fdo::Error::Failed(String::new()));
+            }
+            self.awaken = awaken;
+            Ok(())
+        }
+
+        #[zbus(property)]
+        fn hdmi_cec_phys_addr(&self) -> fdo::Result<u16> {
+            if !self.can_awaken {
+                return Err(fdo::Error::Failed(String::new()));
+            }
+            Ok(self.phys_addr)
+        }
+
+        #[zbus(property)]
+        fn set_hdmi_cec_phys_addr(&mut self, phys_addr: u16) -> fdo::Result<()> {
+            if !self.can_awaken {
+                return Err(fdo::Error::Failed(String::new()));
+            }
+            self.phys_addr = phys_addr;
+            Ok(())
+        }
+    }
+
+    struct MockCecdConfig;
+
+    #[interface(name = "com.steampowered.CecDaemon1.Config1")]
+    impl MockCecdConfig {}
+
+    struct MockCecdDevice {
+        phys_addr: u16,
+    }
+
+    #[interface(name = "com.steampowered.CecDaemon1.CecDevice1")]
+    impl MockCecdDevice {
+        #[zbus(property)]
+        fn physical_address(&self) -> u16 {
+            self.phys_addr
+        }
+    }
+
+    struct CecHwTest {
+        _h: testing::TestHandle,
+        object_server: ObjectServer,
+        connection: Connection,
+    }
+
+    async fn setup_cec_hw_test(config: MockCecHw) -> Result<CecHwTest> {
+        let mut h = testing::start();
+        let connection = h.new_dbus().await.unwrap();
+        let object_server = connection.object_server().clone();
+
+        object_server
+            .at("/com/steampowered/SteamOSManager1", config)
+            .await?;
+        object_server
+            .at("/com/steampowered/CecDaemon1/Daemon", MockCecdConfig {})
+            .await?;
+        object_server
+            .at("/com/steampowered/CecDaemon1", ObjectManager {})
+            .await?;
+        connection
+            .request_name("com.steampowered.SteamOSManager1")
+            .await?;
+        connection
+            .request_name("com.steampowered.CecDaemon1")
+            .await?;
+
+        let connection = h.new_connection().await?;
+
+        Ok(CecHwTest {
+            _h: h,
+            object_server,
+            connection,
+        })
+    }
+
+    #[tokio::test]
+    async fn test_cecd_service_no_hw() {
+        let test = setup_cec_hw_test(MockCecHw {
+            can_awaken: false,
+            phys_addr: 0xFFFF,
+            awaken: false,
+        })
+        .await
+        .unwrap();
+
+        let backend = HdmiCecBackend::Cecd(Config1Proxy::new(&test.connection).await.unwrap());
+        let service = CecdService::new(
+            &test.connection,
+            &HdmiCecControl {
+                connection: test.connection.clone(),
+                backend,
+            },
+        )
+        .await;
+        assert!(service.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_cecd_service_no_device() {
+        let test = setup_cec_hw_test(MockCecHw {
+            can_awaken: true,
+            phys_addr: 0xFFFF,
+            awaken: false,
+        })
+        .await
+        .unwrap();
+
+        let backend = HdmiCecBackend::Cecd(Config1Proxy::new(&test.connection).await.unwrap());
+        let service = CecdService::new(
+            &test.connection,
+            &HdmiCecControl {
+                connection: test.connection.clone(),
+                backend,
+            },
+        )
+        .await;
+        assert!(service.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_cecd_service_device() {
+        let test = setup_cec_hw_test(MockCecHw {
+            can_awaken: true,
+            phys_addr: 0xFFFF,
+            awaken: false,
+        })
+        .await
+        .unwrap();
+
+        test.object_server
+            .at(
+                "/com/steampowered/CecDaemon1/Devices/Cec0",
+                MockCecdDevice { phys_addr: 0x1234 },
+            )
+            .await
+            .unwrap();
+
+        let backend = HdmiCecBackend::Cecd(Config1Proxy::new(&test.connection).await.unwrap());
+        let service = CecdService::new(
+            &test.connection,
+            &HdmiCecControl {
+                connection: test.connection.clone(),
+                backend,
+            },
+        )
+        .await;
+        service.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_cecd_service_reconfigure() {
+        let test = setup_cec_hw_test(MockCecHw {
+            can_awaken: true,
+            phys_addr: 0xFFFF,
+            awaken: false,
+        })
+        .await
+        .unwrap();
+
+        test.object_server
+            .at(
+                "/com/steampowered/CecDaemon1/Devices/Cec0",
+                MockCecdDevice { phys_addr: 0x1234 },
+            )
+            .await
+            .unwrap();
+
+        let backend = HdmiCecBackend::Cecd(Config1Proxy::new(&test.connection).await.unwrap());
+        let service = CecdService::new(
+            &test.connection,
+            &HdmiCecControl {
+                connection: test.connection.clone(),
+                backend,
+            },
+        )
+        .await
+        .unwrap();
+
+        let cec_hw = test
+            .object_server
+            .interface::<_, MockCecHw>("/com/steampowered/SteamOSManager1")
+            .await
+            .unwrap();
+
+        assert_eq!(cec_hw.get().await.phys_addr, 0xFFFF);
+        service.reconfigure().await.unwrap();
+        assert_eq!(cec_hw.get().await.phys_addr, 0x1234);
     }
 }

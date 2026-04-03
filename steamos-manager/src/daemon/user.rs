@@ -183,7 +183,7 @@ pub async fn daemon() -> Result<()> {
         None
     };
 
-    let (signal_relay_service, session_manager_service, screenreader_setup_service) =
+    let services =
         create_interfaces(session.clone(), system.clone(), tx.clone(), jm_tx, tdp_tx).await?;
 
     let mut daemon = Daemon::new(session.clone(), rx).await?;
@@ -193,11 +193,11 @@ pub async fn daemon() -> Result<()> {
         channel: tx,
     };
 
-    daemon.add_service(signal_relay_service);
-    if let Some(service) = screenreader_setup_service {
+    daemon.add_service(services.signal_relay);
+    if let Some(service) = services.screenreader_setup {
         daemon.add_service(service);
     }
-    if let Some(service) = session_manager_service {
+    if let Some(service) = services.session_manager {
         daemon.add_service(service);
     }
     daemon.add_service(jm_service);
@@ -205,6 +205,11 @@ pub async fn daemon() -> Result<()> {
         daemon.add_service(tdp_service);
     } else if let Err(e) = tdp_service {
         info!("TdpManagerService not available: {e}");
+    }
+    if let Ok(service) = services.cecd {
+        daemon.add_service(service);
+    } else if let Err(e) = services.cecd {
+        info!("CecdService not available: {e}");
     }
 
     daemon.run(context).await
