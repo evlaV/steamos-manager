@@ -8,6 +8,7 @@
 
 use anyhow::{Error, Result, bail};
 use cecd_proxy::Config1Proxy;
+use linux_cec::VendorId;
 use num_enum::TryFromPrimitive;
 use serde::Serialize;
 use std::fmt;
@@ -76,7 +77,7 @@ struct CecdConfigFragment {
 #[derive(Serialize, Clone, Debug, Default)]
 struct CecdSystemFragment {
     pub osd_name: Option<String>,
-    pub vendor_id: Option<String>, // TODO: Make this a VendorId once linux-cec 0.2 is tagged
+    pub vendor_id: Option<VendorId>,
 }
 
 enum HdmiCecBackend<'dbus> {

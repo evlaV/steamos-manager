@@ -6,6 +6,7 @@
  */
 
 use anyhow::{Result, bail, ensure};
+use linux_cec::VendorId;
 use num_enum::TryFromPrimitive;
 use serde::Deserialize;
 use std::io::ErrorKind;
@@ -104,7 +105,7 @@ pub(crate) struct DeviceMatch {
     pub device: String,
     pub variant: String,
     pub friendly_name: Option<String>,
-    pub oui: Option<String>,
+    pub oui: Option<VendorId>,
 }
 
 #[derive(Clone, Deserialize, Debug)]

@@ -1830,9 +1830,11 @@ mod test {
     use crate::{path, testing};
 
     use anyhow::{anyhow, bail, ensure};
+    use linux_cec::VendorId;
     use std::num::{NonZero, NonZeroU32};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+    use std::str::FromStr;
     use std::time::Duration;
     use tokio::fs::{create_dir_all, set_permissions, write};
     use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -1918,7 +1920,7 @@ mod test {
                 device: String::from("steam_deck"),
                 variant: String::from("Galileo"),
                 friendly_name: Some(String::from("Steam Deck")),
-                oui: Some(String::from("E0-31-9E")),
+                oui: Some(VendorId::from_str("E0-31-9E").unwrap()),
             }],
             tdp_limit: Some(TdpLimitConfig {
                 method: TdpLimitingMethod::AmdgpuHwmon,
