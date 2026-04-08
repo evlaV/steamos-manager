@@ -202,15 +202,15 @@ impl PlatformConfig {
                 storage.format_device.script = path("exe");
             }
         }
-        if let Some(ref mut update_bios) = self.update_bios {
-            if update_bios.script.as_os_str().is_empty() {
-                update_bios.script = path("exe");
-            }
+        if let Some(ref mut update_bios) = self.update_bios
+            && update_bios.script.as_os_str().is_empty()
+        {
+            update_bios.script = path("exe");
         }
-        if let Some(ref mut update_dock) = self.update_dock {
-            if update_dock.script.as_os_str().is_empty() {
-                update_dock.script = path("exe");
-            }
+        if let Some(ref mut update_dock) = self.update_dock
+            && update_dock.script.as_os_str().is_empty()
+        {
+            update_dock.script = path("exe");
         }
     }
 }

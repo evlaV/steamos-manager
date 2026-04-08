@@ -94,10 +94,10 @@ pub fn start() -> TestHandle {
 pub fn stop() {
     TEST.with(|lock| {
         let test = (*lock.borrow_mut()).take();
-        if let Some(test) = test {
-            if let Some(mock_dbus) = test.mock_dbus.lock().unwrap().take() {
-                let _ = mock_dbus.shutdown();
-            }
+        if let Some(test) = test
+            && let Some(mock_dbus) = test.mock_dbus.lock().unwrap().take()
+        {
+            let _ = mock_dbus.shutdown();
         }
     });
 }

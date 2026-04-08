@@ -521,11 +521,11 @@ pub mod test {
         ) -> fdo::Result<Vec<(String, String, String)>> {
             let mut res = Vec::new();
             for file in files {
-                if let Some(state) = self.states.get(&file) {
-                    if *state == EnableState::Masked {
-                        self.states.remove(&file);
-                        res.push((String::default(), String::default(), file.to_string()));
-                    }
+                if let Some(state) = self.states.get(&file)
+                    && *state == EnableState::Masked
+                {
+                    self.states.remove(&file);
+                    res.push((String::default(), String::default(), file.to_string()));
                 }
             }
             Ok(res)
