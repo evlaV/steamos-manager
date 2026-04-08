@@ -98,7 +98,7 @@ impl UInputDevice {
     pub(crate) fn open(&mut self, keybits: &[Key]) -> Result<()> {
         ensure!(!self.open, "Cannot reopen uinput handle");
         self.open = true;
-        self.keybits = HashSet::from_iter(keybits.into_iter().copied());
+        self.keybits = HashSet::from_iter(keybits.iter().copied());
         Ok(())
     }
 

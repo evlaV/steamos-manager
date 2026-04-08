@@ -713,8 +713,10 @@ mod test {
     async fn prepare_factory_reset() {
         let test = start().await.expect("start");
 
-        let mut config = PlatformConfig::default();
-        config.factory_reset = Some(ResetConfig::default());
+        let config = PlatformConfig {
+            factory_reset: Some(ResetConfig::default()),
+            ..PlatformConfig::default()
+        };
         test.h.test.set_platform_config(config).await;
 
         let name = test.connection.unique_name().unwrap();

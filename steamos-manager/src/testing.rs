@@ -112,9 +112,11 @@ pub struct MockDBus {
     process: Child,
 }
 
+type MockProcessCb = fn(&OsStr, &[&OsStr]) -> Result<(i32, String)>;
+
 pub struct Test {
     base: TempDir,
-    pub process_cb: Mutex<fn(&OsStr, &[&OsStr]) -> Result<(i32, String)>>,
+    pub process_cb: Mutex<MockProcessCb>,
     pub mock_dbus: sync::Mutex<Option<MockDBus>>,
     pub dbus_address: Mutex<Option<Address>>,
     pub platform_config: Mutex<Option<PlatformConfig>>,
@@ -171,7 +173,7 @@ impl MockDBus {
             Err(message) => bail!("Unable to get pid_t from command {message}"),
         };
         signal::kill(Pid::from_raw(pid), signal::Signal::SIGINT)?;
-        for _ in [0..10] {
+        for _ in 0..10 {
             // Wait for the process to exit synchronously, but not for too long
             if self.process.try_wait()?.is_some() {
                 break;
@@ -214,7 +216,7 @@ impl Test {
         *self.platform_config.lock().await = None;
     }
 
-    pub async fn set_process_cb(&self, process_cb: fn(&OsStr, &[&OsStr]) -> Result<(i32, String)>) {
+    pub async fn set_process_cb(&self, process_cb: MockProcessCb) {
         *self.process_cb.lock().await = process_cb;
     }
 }
@@ -271,10 +273,7 @@ impl<'a> InterfaceIntrospection<'a> {
         Self::from_xml(remote_interface_string.as_bytes(), I::name().to_string())
     }
 
-    pub async fn from_local<'p, P: AsRef<Path>, S: AsRef<str>>(
-        path: P,
-        interface: S,
-    ) -> Result<Self> {
+    pub async fn from_local<P: AsRef<Path>, S: AsRef<str>>(path: P, interface: S) -> Result<Self> {
         let local_interface_string = read(path.as_ref()).await?;
         Self::from_xml(local_interface_string.as_ref(), interface)
     }

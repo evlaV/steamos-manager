@@ -707,7 +707,7 @@ mod test {
             if args.len() > 2 {
                 bail!("Unknown query");
             }
-            return Ok((0, String::from("Interface wlan0")));
+            Ok((0, String::from("Interface wlan0")))
         }
         h.test.set_process_cb(process_output).await;
 

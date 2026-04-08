@@ -205,11 +205,11 @@ mod test {
             *map.get("comm").expect("comm"),
             zvariant::Value::new("ftrace")
         );
-        assert!(map.get("appid").is_none());
+        assert!(!map.contains_key("appid"));
 
         let mut map = HashMap::new();
         assert!(Ftrace::handle_pid(&mut map, 1236).await.is_ok());
-        assert!(map.get("comm").is_none());
+        assert!(!map.contains_key("comm"));
         assert_eq!(
             *map.get("appid").expect("appid"),
             zvariant::Value::new(5678_u64)
@@ -328,10 +328,10 @@ mod test {
             .expect("dbus");
         let mut ftrace = Ftrace::init(&dbus).await.expect("ftrace");
 
-        assert!(match receiver.try_recv() {
-            Err(error::TryRecvError::Empty) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(error::TryRecvError::Empty)
+        ));
         ftrace
             .handle_event(
                 " GamepadUI Input-4886    [003] .N.1. 23828.572941: mark_victim: pid=14351",

@@ -833,10 +833,12 @@ pub mod test {
 
         sleep(Duration::from_millis(10)).await;
 
-        let mut platform_config = PlatformConfig::default();
-        platform_config.fan_control = Some(ServiceConfig::Systemd(String::from(
-            "jupiter-fan-control.service",
-        )));
+        let platform_config = PlatformConfig {
+            fan_control: Some(ServiceConfig::Systemd(String::from(
+                "jupiter-fan-control.service",
+            ))),
+            ..PlatformConfig::default()
+        };
         h.test.set_platform_config(platform_config).await;
 
         let fan_control = FanControl::new(connection);
@@ -858,12 +860,14 @@ pub mod test {
         let mut h = testing::start();
         let connection = h.new_dbus().await.expect("dbus");
 
-        let mut config = DeviceConfig::default();
-        config.fan_speed = Some(FanSpeedConfig {
-            hwmon: String::from("steamdeck_hwmon"),
-            attribute: String::from("fan1_target"),
-            download_mode_fan_speed: None,
-        });
+        let config = DeviceConfig {
+            fan_speed: Some(FanSpeedConfig {
+                hwmon: String::from("steamdeck_hwmon"),
+                attribute: String::from("fan1_target"),
+                download_mode_fan_speed: None,
+            }),
+            ..DeviceConfig::default()
+        };
         h.test.set_device_config(config).await;
 
         let base = path(crate::power::HWMON_PREFIX).join(STEAMDECK_HWMON);

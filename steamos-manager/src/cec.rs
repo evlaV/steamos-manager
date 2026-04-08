@@ -120,7 +120,7 @@ impl<'dbus> HdmiCecControl<'dbus> {
             && let Some(device_match) = device_config.device_match().await?
             && (device_match.friendly_name.is_some() || device_match.oui.is_some())
         {
-            (device_match.friendly_name.clone(), device_match.oui.clone())
+            (device_match.friendly_name.clone(), device_match.oui)
         } else {
             if let Err(err) = remove_file(path.join(CECD_SYSTEM_CONFIG)).await
                 && err.kind() != ErrorKind::NotFound

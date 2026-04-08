@@ -1874,7 +1874,7 @@ mod test {
             TestConfig {
                 platform: all_platform_config(),
                 device: all_device_config(),
-                setup: NopTestSetup::default(),
+                setup: NopTestSetup,
             }
         }
 
@@ -1882,7 +1882,7 @@ mod test {
             TestConfig {
                 platform: None,
                 device: None,
-                setup: NopTestSetup::default(),
+                setup: NopTestSetup,
             }
         }
     }
@@ -1892,7 +1892,7 @@ mod test {
             TestConfig {
                 platform: None,
                 device: None,
-                setup: setup,
+                setup,
             }
         }
     }
@@ -2025,7 +2025,7 @@ mod test {
         crate::gpu::test::create_nodes().await?;
         crate::power::test::create_nodes().await?;
 
-        config.setup.setup(&mut handle, &connection).await?;
+        config.setup.setup(&handle, &connection).await?;
 
         create_interfaces(
             connection.clone(),
@@ -2038,11 +2038,10 @@ mod test {
 
         tokio::spawn(async move {
             while let Some(command) = rx_ctx.recv().await {
-                match command {
-                    DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) => {
-                        _ = sender.send(SessionManagerState::default())
-                    }
-                    _ => (),
+                if let DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) =
+                    command
+                {
+                    _ = sender.send(SessionManagerState::default())
                 }
             }
             Ok::<_, Error>(())
@@ -2149,7 +2148,7 @@ mod test {
         let test = start(TestConfig {
             platform: Some(config),
             device: None,
-            setup: NopTestSetup::default(),
+            setup: NopTestSetup,
         })
         .await
         .expect("start");
@@ -2167,7 +2166,7 @@ mod test {
         let test = start(TestConfig {
             platform: Some(config),
             device: None,
-            setup: NopTestSetup::default(),
+            setup: NopTestSetup,
         })
         .await
         .expect("start");
@@ -2384,7 +2383,7 @@ mod test {
         let test = start(TestConfig {
             platform: Some(config),
             device: all_device_config(),
-            setup: NopTestSetup::default(),
+            setup: NopTestSetup,
         })
         .await
         .expect("start");
@@ -2395,13 +2394,15 @@ mod test {
     #[tokio::test]
     async fn interface_missing_invalid_format_storage1() {
         let mut config = all_platform_config().unwrap();
-        let mut format_config = FormatDeviceConfig::default();
-        format_config.script = PathBuf::from("oxo");
+        let format_config = FormatDeviceConfig {
+            script: PathBuf::from("oxo"),
+            ..FormatDeviceConfig::default()
+        };
         config.storage.as_mut().unwrap().format_device = format_config;
         let test = start(TestConfig {
             platform: Some(config),
             device: all_device_config(),
-            setup: NopTestSetup::default(),
+            setup: NopTestSetup,
         })
         .await
         .expect("start");
@@ -2437,7 +2438,7 @@ mod test {
         let test = start(TestConfig {
             platform: Some(config),
             device: all_device_config(),
-            setup: NopTestSetup::default(),
+            setup: NopTestSetup,
         })
         .await
         .expect("start");
@@ -2473,7 +2474,7 @@ mod test {
         let test = start(TestConfig {
             platform: Some(config),
             device: all_device_config(),
-            setup: NopTestSetup::default(),
+            setup: NopTestSetup,
         })
         .await
         .expect("start");
@@ -2569,7 +2570,7 @@ mod test {
         test: &TestHandle<S>,
         new_conn: &Connection,
     ) -> Result<()> {
-        let proxy = RemoteInterface1Proxy::builder(&new_conn)
+        let proxy = RemoteInterface1Proxy::builder(new_conn)
             .destination(
                 test.connection
                     .unique_name()
@@ -2985,7 +2986,7 @@ mod test {
 
         #[zbus(property(emits_changed_signal = "const"))]
         async fn suggested_minimum_limit(&self) -> i32 {
-            return BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT;
+            BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT
         }
     }
 
@@ -3144,18 +3145,20 @@ mod test {
 
     #[tokio::test]
     async fn remote_tdp_limit1_relay_download_mode() {
-        let mut device = DeviceConfig::default();
-        device.tdp_limit = Some(TdpLimitConfig {
-            method: TdpLimitingMethod::RemoteInterface,
-            range: None,
-            download_mode_limit: Some(NonZero::new(5).unwrap()),
-            firmware_attribute: None,
-            performance_profile: None,
-        });
+        let device = DeviceConfig {
+            tdp_limit: Some(TdpLimitConfig {
+                method: TdpLimitingMethod::RemoteInterface,
+                range: None,
+                download_mode_limit: Some(NonZero::new(5).unwrap()),
+                firmware_attribute: None,
+                performance_profile: None,
+            }),
+            ..DeviceConfig::default()
+        };
         let mut test = start(TestConfig {
             platform: None,
             device: Some(device),
-            setup: NopTestSetup::default(),
+            setup: NopTestSetup,
         })
         .await
         .unwrap();

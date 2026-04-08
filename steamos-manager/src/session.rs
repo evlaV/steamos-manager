@@ -516,14 +516,13 @@ mod test {
 
         let task = spawn(async move {
             while let Some(message) = rx.recv().await {
-                match message {
-                    DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) => {
-                        _ = sender.send(SessionManagerState {
-                            default_login_mode: LoginMode::Desktop,
-                            desktop_session: Some(String::from("plasma.desktop").into()),
-                        })
-                    }
-                    _ => (),
+                if let DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) =
+                    message
+                {
+                    _ = sender.send(SessionManagerState {
+                        default_login_mode: LoginMode::Desktop,
+                        desktop_session: Some(String::from("plasma.desktop").into()),
+                    })
                 }
             }
         });

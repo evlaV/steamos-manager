@@ -691,11 +691,11 @@ mod test {
             .await
             .expect("OrcaManager::new");
         manager.set_enabled(true).await.unwrap();
-        assert_eq!(manager.enabled(), true);
+        assert!(manager.enabled());
         assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
         manager.set_enabled(false).await.unwrap();
-        assert_eq!(manager.enabled(), false);
+        assert!(!manager.enabled());
         assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
 
         copy(TEST_ORCA_SETTINGS, h.test.path().join(ORCA_SETTINGS))
@@ -704,11 +704,11 @@ mod test {
         manager.load_values().await.unwrap();
 
         manager.set_enabled(true).await.unwrap();
-        assert_eq!(manager.enabled(), true);
+        assert!(manager.enabled());
         assert_eq!(unit.active().await.unwrap(), ActiveState::Active);
 
         manager.set_enabled(false).await.unwrap();
-        assert_eq!(manager.enabled(), false);
+        assert!(!manager.enabled());
         assert_eq!(unit.active().await.unwrap(), ActiveState::Inactive);
     }
 
