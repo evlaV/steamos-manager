@@ -110,7 +110,7 @@ pub(crate) trait RootManager {
     fn set_default_session(&self, session: &str) -> zbus::Result<()>;
     fn set_fan_speed(&self, rpm: u32) -> zbus::Result<()>;
 
-    #[zbus(property(emits_changed_signal = "false"))]
+    #[zbus(property)]
     fn fan_control_state(&self) -> zbus::Result<u32>;
     #[zbus(property)]
     fn set_fan_control_state(&self, state: u32) -> zbus::Result<()>;
@@ -157,7 +157,7 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)
     }
 
-    #[zbus(property(emits_changed_signal = "false"))]
+    #[zbus(property)]
     async fn fan_control_state(&self) -> fdo::Result<u32> {
         Ok(self
             .fan_control
@@ -167,7 +167,11 @@ impl SteamOSManager {
     }
 
     #[zbus(property)]
-    async fn set_fan_control_state(&self, state: u32) -> zbus::Result<()> {
+    async fn set_fan_control_state(
+        &self,
+        state: u32,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> zbus::Result<()> {
         let state = match FanControlState::try_from(state) {
             Ok(state) => state,
             Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string()).into()),
@@ -176,7 +180,8 @@ impl SteamOSManager {
         self.fan_control
             .set_state(state)
             .await
-            .map_err(to_zbus_error)
+            .map_err(to_zbus_error)?;
+        self.fan_control_state_changed(&ctx).await
     }
 
     async fn set_fan_speed(&self, rpm: u32) -> fdo::Result<()> {
