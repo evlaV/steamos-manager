@@ -38,6 +38,7 @@ clippy:
   script:
     - pacman -Syu --noconfirm --needed rust clang speech-dispatcher
     - cargo clippy -- -Dwarnings
+    - cargo clippy --tests -- -Dwarnings
 
 proxy:
   stage: test
