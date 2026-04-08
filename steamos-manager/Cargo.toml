@@ -18,7 +18,7 @@ linux-cec = { version = "0.2", default-features = false, features = ["serde"] }
 libc = "0.2"
 nix = { version = "0.31", default-features = false, features = ["fs", "poll", "signal", "time", "user"] }
 num_enum = "0.7"
-regex = "1"
+regex = { version = "1", default-features = false, features = ["unicode-perl"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
 speech-dispatcher = "0.16"
