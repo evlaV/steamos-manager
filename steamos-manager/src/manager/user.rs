@@ -443,7 +443,7 @@ impl CpuScheduler1 {
             debug!("set CpuScheduler: discarding out of order serial");
             return Ok(());
         }
-        let _: () = self.proxy.call("SetCpuScheduler", &(scheduler)).await?;
+        let _: () = setter!(self, "CpuScheduler", scheduler)?;
         Ok(self.cpu_scheduler_changed(&ctx).await?)
     }
 }

@@ -370,13 +370,19 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)
     }
 
-    async fn set_cpu_scheduler(&mut self, scheduler: String) -> fdo::Result<()> {
+    #[zbus(property)]
+    async fn set_cpu_scheduler(
+        &mut self,
+        scheduler: String,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
         let s = CpuScheduler::try_from(scheduler.as_str()).map_err(to_zbus_fdo_error)?;
         self.cpu_scheduler_manager
             .set_cpu_scheduler(s)
             .await
             .inspect_err(|message| error!("Error setting CPU scheduler: {message}"))
-            .map_err(to_zbus_fdo_error)
+            .map_err(to_zbus_fdo_error)?;
+        Ok(self.cpu_scheduler_changed(&ctx).await?)
     }
 
     async fn set_cpu_boost_state(&self, state: u32) -> fdo::Result<()> {
