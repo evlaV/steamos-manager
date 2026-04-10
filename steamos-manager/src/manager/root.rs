@@ -506,7 +506,7 @@ impl SteamOSManager {
         };
 
         if self.wifi_debug_mode == wanted_mode {
-            info!("Not changing wifi debug mode since it's already set to {wanted_mode}");
+            debug!("Not changing wifi debug mode since it's already set to {wanted_mode}");
             return Ok(());
         }
 
