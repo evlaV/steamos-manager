@@ -64,9 +64,12 @@ const TDP_LIMIT1: &str = "power1_cap";
 const TDP_LIMIT2: &str = "power2_cap";
 
 #[cfg(not(test))]
-const SB_PATH: &str = "/sys/bus/acpi/drivers/battery/PNP0C0A:00/power_supply";
+const SB_PATHS: &[&str] = &[
+    "/sys/bus/platform/drivers/acpi-battery/PNP0C0A:00/firmware_node/power_supply",
+    "/sys/bus/acpi/drivers/battery/PNP0C0A:00/power_supply",
+];
 #[cfg(test)]
-const SB_PATH: &str = "power_supply";
+const SB_PATHS: &[&str] = &["power_supply", "power_supply_legacy"];
 pub const BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT: i32 = 10;
 const SB_LIMIT_PATH: &str = "charge_control_end_threshold";
 
@@ -666,19 +669,25 @@ async fn find_battery_charge_path() -> Result<PathBuf> {
 
     match &config.method {
         BatteryChargeLimitMethod::AcpiSb => {
-            let mut dir = read_dir(path(SB_PATH)).await?;
-            while let Some(entry) = dir.next_entry().await? {
-                if !entry.file_type().await?.is_dir() {
-                    continue;
-                }
-                let path = entry.path();
-                let path = match read_to_string(path.join("type")).await {
-                    Ok(s) if s.trim() == "Battery" => path.join(SB_LIMIT_PATH),
-                    Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
-                    _ => continue,
+            for base in SB_PATHS {
+                let mut dir = match read_dir(path(base)).await {
+                    Ok(dir) => dir,
+                    Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e.into()),
                 };
-                if try_exists(&path).await? {
-                    return Ok(path);
+                while let Some(entry) = dir.next_entry().await? {
+                    if !entry.file_type().await?.is_dir() {
+                        continue;
+                    }
+                    let path = entry.path();
+                    let path = match read_to_string(path.join("type")).await {
+                        Ok(s) if s.trim() == "Battery" => path.join(SB_LIMIT_PATH),
+                        Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
+                        _ => continue,
+                    };
+                    if try_exists(&path).await? {
+                        return Ok(path);
+                    }
                 }
             }
         }
@@ -1413,7 +1422,7 @@ pub(crate) mod test {
         };
         handle.test.set_device_config(config).await;
 
-        let base = path(SB_PATH).join("BAT1");
+        let base = path(SB_PATHS[0]).join("BAT1");
         create_dir_all(&base).await.expect("create_dir_all");
 
         write(base.join("type"), "Battery\n").await.expect("write");
@@ -1424,7 +1433,7 @@ pub(crate) mod test {
 
         assert_eq!(
             find_battery_charge_path().await.unwrap(),
-            path(SB_PATH).join("BAT1/charge_control_end_threshold")
+            path(SB_PATHS[0]).join("BAT1/charge_control_end_threshold")
         );
 
         assert_eq!(get_max_charge_level().await.unwrap(), 10);
@@ -1437,6 +1446,36 @@ pub(crate) mod test {
 
         assert!(set_max_charge_level(101).await.is_err());
         assert!(set_max_charge_level(-1).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_max_charge_level_acpi_sb_legacy_path() {
+        let handle = testing::start();
+
+        let config = DeviceConfig {
+            battery_charge_limit: Some(BatteryChargeLimitConfig {
+                suggested_minimum_limit: 10,
+                method: BatteryChargeLimitMethod::AcpiSb,
+            }),
+            ..DeviceConfig::default()
+        };
+        handle.test.set_device_config(config).await;
+
+        let base = path(SB_PATHS[1]).join("BAT1");
+        create_dir_all(&base).await.expect("create_dir_all");
+
+        write(base.join("type"), "Battery\n").await.expect("write");
+
+        write(base.join(SB_LIMIT_PATH), "80\n")
+            .await
+            .expect("write");
+
+        assert_eq!(
+            find_battery_charge_path().await.unwrap(),
+            path(SB_PATHS[1]).join("BAT1/charge_control_end_threshold")
+        );
+
+        assert_eq!(get_max_charge_level().await.unwrap(), 80);
     }
 
     #[tokio::test]
