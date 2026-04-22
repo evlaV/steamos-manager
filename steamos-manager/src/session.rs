@@ -29,10 +29,11 @@ use crate::manager::root::RootManagerProxy;
 use crate::systemd::{ActiveState, JobMode, SystemdUnit};
 use crate::{Service, path};
 
+const CONFIG_PREFIX_USR: &str = "/usr/lib/sddm/sddm.conf.d";
 const CONFIG_PREFIX: &str = "/etc/sddm.conf.d";
-const SESSION_CHECK_PATH: &str = "steamos.conf";
-const CONFIG_PATH: &str = "zz-steamos-autologin.conf";
-const TEMPORARY_CONFIG_PATH: &str = "zzt-steamos-temp-login.conf";
+const SESSION_CHECK_PATH: &str = "holo.conf";
+const CONFIG_PATH: &str = "zz-holo-autologin.conf";
+const TEMPORARY_CONFIG_PATH: &str = "zzt-holo-temp-login.conf";
 
 #[derive(Default, Deserialize, Serialize, Display, EnumString, PartialEq, Debug, Copy, Clone)]
 #[strum(serialize_all = "snake_case")]
@@ -92,12 +93,12 @@ pub(crate) enum SessionManagerMessage {
 }
 
 pub(crate) async fn is_session_managed() -> Result<bool> {
-    Ok(try_exists(path(CONFIG_PREFIX).join(SESSION_CHECK_PATH)).await?)
+    Ok(try_exists(path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH)).await?)
 }
 
 #[cfg(test)]
 pub(crate) async fn make_managed() -> Result<()> {
-    let check_path = path(CONFIG_PREFIX).join(SESSION_CHECK_PATH);
+    let check_path = path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH);
     create_dir_all(check_path.parent().ok_or(anyhow!("Couldn't make dir"))?).await?;
     write(check_path, "").await?;
     Ok(())
