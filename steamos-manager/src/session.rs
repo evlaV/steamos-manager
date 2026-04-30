@@ -12,12 +12,13 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::io::ErrorKind;
+use std::path::PathBuf;
 use strum::{Display, EnumString};
 #[cfg(test)]
 use tokio::fs::{create_dir_all, write};
 use tokio::fs::{read_dir, try_exists};
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{OnceCell, broadcast, oneshot};
 use tokio_stream::StreamExt;
 use tracing::debug;
 use xdg::BaseDirectories;
@@ -31,9 +32,64 @@ use crate::{Service, path};
 
 const CONFIG_PREFIX_USR: &str = "/usr/lib/sddm/sddm.conf.d";
 const CONFIG_PREFIX: &str = "/etc/sddm.conf.d";
+const SESSION_CHECK_PATH_LEGACY: &str = "steamos.conf";
+const CONFIG_PATH_LEGACY: &str = "zz-steamos-autologin.conf";
+const TEMPORARY_CONFIG_PATH_LEGACY: &str = "zzt-steamos-temp-login.conf";
 const SESSION_CHECK_PATH: &str = "holo.conf";
 const CONFIG_PATH: &str = "zz-holo-autologin.conf";
 const TEMPORARY_CONFIG_PATH: &str = "zzt-holo-temp-login.conf";
+
+static CONFIG_PATHS: OnceCell<ConfigPaths> = OnceCell::const_new();
+
+struct ConfigPaths {
+    check: PathBuf,
+    default_config: PathBuf,
+    default_temp_config: PathBuf,
+}
+
+impl ConfigPaths {
+    async fn resolve() -> Result<ConfigPaths> {
+        // We determine whether we are defaulting to the "holo" or "steamos" naming convention
+        // based on the name of the config file in CONFIG_PREFIX_USR.
+        if try_exists(path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH_LEGACY)).await? {
+            Ok(ConfigPaths {
+                check: path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH_LEGACY),
+                default_config: path(CONFIG_PREFIX).join(CONFIG_PATH_LEGACY),
+                default_temp_config: path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH_LEGACY),
+            })
+        } else {
+            Ok(ConfigPaths {
+                check: path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH),
+                default_config: path(CONFIG_PREFIX).join(CONFIG_PATH),
+                default_temp_config: path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH),
+            })
+        }
+    }
+
+    // Check for the existence of the legacy naming convention file before using the new naming as
+    // these will take precedence when sddm parses the config files.
+    async fn config(&self) -> Result<PathBuf> {
+        let legacy = path(CONFIG_PREFIX).join(CONFIG_PATH_LEGACY);
+        if try_exists(&legacy).await? {
+            return Ok(legacy);
+        }
+
+        Ok(self.default_config.clone())
+    }
+
+    async fn temp_config(&self) -> Result<PathBuf> {
+        let legacy = path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH_LEGACY);
+        if try_exists(&legacy).await? {
+            return Ok(legacy);
+        }
+
+        Ok(self.default_temp_config.clone())
+    }
+}
+
+async fn get_config_paths() -> Result<&'static ConfigPaths> {
+    CONFIG_PATHS.get_or_try_init(ConfigPaths::resolve).await
+}
 
 #[derive(Default, Deserialize, Serialize, Display, EnumString, PartialEq, Debug, Copy, Clone)]
 #[strum(serialize_all = "snake_case")]
@@ -93,14 +149,15 @@ pub(crate) enum SessionManagerMessage {
 }
 
 pub(crate) async fn is_session_managed() -> Result<bool> {
-    Ok(try_exists(path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH)).await?)
+    let paths = get_config_paths().await?;
+    Ok(try_exists(&paths.check).await?)
 }
 
 #[cfg(test)]
 pub(crate) async fn make_managed() -> Result<()> {
-    let check_path = path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH);
-    create_dir_all(check_path.parent().ok_or(anyhow!("Couldn't make dir"))?).await?;
-    write(check_path, "").await?;
+    let paths = get_config_paths().await?;
+    create_dir_all(paths.check.parent().ok_or(anyhow!("Couldn't make dir"))?).await?;
+    write(&paths.check, "").await?;
     Ok(())
 }
 
@@ -305,13 +362,12 @@ pub(crate) mod root {
     use std::io::ErrorKind;
     use tokio::fs::{remove_file, write};
 
-    use crate::path;
-    use crate::session::{CONFIG_PATH, CONFIG_PREFIX, TEMPORARY_CONFIG_PATH};
+    use crate::session::get_config_paths;
 
     pub(crate) async fn clean_temporary_sessions() -> Result<()> {
-        let prefix = path(CONFIG_PREFIX);
+        let paths = get_config_paths().await?;
 
-        match remove_file(prefix.join(TEMPORARY_CONFIG_PATH)).await {
+        match remove_file(paths.temp_config().await?).await {
             Ok(()) => (),
             Err(e) if e.kind() == ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
@@ -325,8 +381,9 @@ pub(crate) mod root {
             !session.contains('\n'),
             "Session name cannot contain newlines"
         );
+        let paths = get_config_paths().await?;
         Ok(write(
-            path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH),
+            paths.temp_config().await?,
             format!("[Autologin]\nSession={session}\n").as_bytes(),
         )
         .await?)
@@ -337,8 +394,9 @@ pub(crate) mod root {
             !session.contains('\n'),
             "Session name cannot contain newlines"
         );
+        let paths = get_config_paths().await?;
         Ok(write(
-            path(CONFIG_PREFIX).join(CONFIG_PATH),
+            paths.config().await?,
             format!("[Autologin]\nSession={session}\n").as_bytes(),
         )
         .await?)
