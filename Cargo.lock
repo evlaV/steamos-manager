@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "steamos-manager"
-version = "26.0.1"
+version = "26.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "steamos-manager-proxy"
-version = "26.0.0"
+version = "26.1.0"
 dependencies = [
  "zbus",
 ]
