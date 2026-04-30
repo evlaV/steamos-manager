@@ -9,6 +9,7 @@ use anyhow::{Result, anyhow};
 use inotify::{Event, EventMask, EventStream, Inotify, WatchDescriptor, WatchMask};
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::fs::{self, read_dir, read_link};
@@ -159,8 +160,12 @@ impl HidNode {
         let mut res = Ok(());
         for node in self.get_nodes().await? {
             if let Err(err) = write_synced(node, b"0\n").await {
-                error!("Encountered error uninhibiting: {err}");
-                res = Err(err);
+                if err.kind() == ErrorKind::NotFound {
+                    debug!("Node disappeared before uninhibiting");
+                } else {
+                    error!("Encountered error uninhibiting: {err}");
+                    res = Err(err);
+                }
             }
         }
         res
