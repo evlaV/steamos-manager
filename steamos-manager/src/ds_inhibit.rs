@@ -41,7 +41,7 @@ impl HidNode {
         path(format!("/dev/hidraw{}", self.id))
     }
 
-    async fn get_nodes(&self) -> Result<Vec<PathBuf>> {
+    async fn get_nodes(&self) -> std::io::Result<Vec<PathBuf>> {
         let mut entries = Vec::new();
         let mut dir = read_dir(self.sys_base().join("input")).await?;
         while let Some(entry) = dir.next_entry().await? {
@@ -144,7 +144,7 @@ impl HidNode {
         Ok(())
     }
 
-    async fn inhibit(&self) -> Result<()> {
+    async fn inhibit(&self) -> std::io::Result<()> {
         let mut res = Ok(());
         for node in self.get_nodes().await? {
             if let Err(err) = write_synced(node, b"1\n").await {
@@ -155,11 +155,11 @@ impl HidNode {
         res
     }
 
-    async fn uninhibit(&self) -> Result<()> {
+    async fn uninhibit(&self) -> std::io::Result<()> {
         let mut res = Ok(());
         for node in self.get_nodes().await? {
             if let Err(err) = write_synced(node, b"0\n").await {
-                error!("Encountered error inhibiting: {err}");
+                error!("Encountered error uninhibiting: {err}");
                 res = Err(err);
             }
         }
@@ -285,14 +285,14 @@ impl Service for Inhibitor {
         for (wd, node) in self.watches.drain() {
             if let Err(e) = self.inotify.watches().remove(wd) {
                 warn!("Error removing watch while shutting down: {e}");
-                res = Err(e.into());
+                res = Err(e);
             }
             if let Err(e) = node.uninhibit().await {
                 warn!("Error uninhibiting {} while shutting down: {e}", node.id);
                 res = Err(e);
             }
         }
-        res
+        Ok(res?)
     }
 }
 

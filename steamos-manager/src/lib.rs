@@ -157,10 +157,10 @@ pub fn path<S: AsRef<Path>>(path: S) -> PathBuf {
         .join(path.as_ref().strip_prefix("/").unwrap_or(path.as_ref()))
 }
 
-pub(crate) async fn write_synced<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Result<()> {
+pub(crate) async fn write_synced<P: AsRef<Path>>(path: P, bytes: &[u8]) -> std::io::Result<()> {
     let mut file = File::create(path.as_ref()).await?;
     file.write_all(bytes).await?;
-    Ok(file.sync_data().await?)
+    file.sync_data().await
 }
 
 pub(crate) fn read_comm(pid: u32) -> Result<String> {

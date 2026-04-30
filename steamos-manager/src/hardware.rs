@@ -362,7 +362,7 @@ impl FanControl {
         let base = find_hwmon(&config.hwmon).await?;
         let path = base.join(&config.attribute);
         debug!("Writing fan speed {rpm} to {}", path.display());
-        write_synced(path, rpm.to_string().as_bytes()).await
+        Ok(write_synced(path, rpm.to_string().as_bytes()).await?)
     }
 }
 

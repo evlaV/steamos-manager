@@ -428,9 +428,9 @@ pub(crate) async fn set_cpu_boost_state(state: CPUBoostState) -> Result<()> {
         (CpuBoostDriver::IntelPstate, CPUBoostState::Enabled) => "0",
         (CpuBoostDriver::IntelPstate, CPUBoostState::Disabled) => "1",
     };
-    write_synced(path, contents.as_bytes())
+    Ok(write_synced(path, contents.as_bytes())
         .await
-        .inspect_err(|message| error!("Error writing to CPU boost sysfs file: {message}"))
+        .inspect_err(|message| error!("Error writing to CPU boost sysfs file: {message}"))?)
 }
 
 pub(crate) async fn find_hwmon(hwmon: &str) -> Result<PathBuf> {
@@ -568,7 +568,8 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
             fppt_value.to_string().as_bytes(),
         )
         .await
-        .inspect_err(|message| error!("Error writing to sysfs file: {message}"))
+        .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
+        Ok(())
     }
 
     async fn get_tdp_limit_range(&self) -> Result<RangeInclusive<u32>> {

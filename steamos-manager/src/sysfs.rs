@@ -98,7 +98,7 @@ impl Service for SysfsWriterService {
             let res = write_synced(path, &contents)
                 .await
                 .inspect_err(|message| error!("Error writing to sysfs file: {message}"));
-            let _ = tx.send(SysfsWritten::Written(res));
+            let _ = tx.send(SysfsWritten::Written(res.map_err(Into::into)));
         }
     }
 }

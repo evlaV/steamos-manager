@@ -193,9 +193,9 @@ trait AmdgpuGpuPerfDriver {
 
     async fn write_sysfs_contents<S: AsRef<Path>>(suffix: S, data: &[u8]) -> Result<()> {
         let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
-        write_synced(base.join(suffix), data)
+        Ok(write_synced(base.join(suffix), data)
             .await
-            .inspect_err(|message| error!("Error writing to sysfs file: {message}"))
+            .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?)
     }
 }
 
@@ -484,7 +484,7 @@ impl IntelGpuPerformanceLevelDriver {
 
     async fn write_sysfs_contents<S: AsRef<Path>>(&self, suffix: S, data: &[u8]) -> Result<()> {
         let path = self.card_path.join(suffix.as_ref());
-        write_synced(path, data).await
+        Ok(write_synced(path, data).await?)
     }
 
     async fn read_freq(&self, freq_path: &str) -> Result<u32> {
