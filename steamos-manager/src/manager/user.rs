@@ -12,6 +12,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs::try_exists;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::task::{JoinHandle, spawn};
@@ -1475,6 +1476,7 @@ impl Service for ScreenReaderSetupService {
                     let _ = object_server.remove::<ScreenReader0, _>(MANAGER_PATH).await;
                     let _ = object_server.remove::<ScreenReader1, _>(MANAGER_PATH).await;
                 }
+                Err(RecvError::Closed) => return Ok(()),
                 Err(e) => return Err(e.into()),
             }
         }
