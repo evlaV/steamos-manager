@@ -28,7 +28,6 @@ use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 
 use steamos_manager_macros::{RemoteManager, remote};
 
-use crate::audio::{AudioManager, Mode};
 use crate::cec::{CecdService, HdmiCecControl, HdmiCecState};
 use crate::daemon::DaemonCommand;
 use crate::daemon::user::Command;
@@ -123,10 +122,6 @@ macro_rules! setter {
             .await
             .map_err(|e| zbus::Error::FDO(Box::new(e)))
     };
-}
-
-struct AudioManager1 {
-    manager: AudioManager,
 }
 
 struct AmbientLightSensor1 {
@@ -279,34 +274,6 @@ pub(crate) struct SignalRelayService {
 pub(crate) struct ScreenReaderSetupService {
     session: Connection,
     channel: broadcast::Receiver<SessionManagerMessage>,
-}
-
-impl AudioManager1 {
-    async fn new() -> Result<AudioManager1> {
-        let manager = AudioManager::new().await;
-        Ok(AudioManager1 { manager })
-    }
-}
-
-#[interface(name = "com.steampowered.SteamOSManager1.Audio1")]
-impl AudioManager1 {
-    #[zbus(property)]
-    async fn mode(&self) -> fdo::Result<String> {
-        let mode = self.manager.mode();
-        match mode {
-            Some(mode) => Ok(mode.to_string()),
-            _ => Err(fdo::Error::Failed(String::from("Unknown audio mode"))),
-        }
-    }
-
-    #[zbus(property)]
-    async fn set_mode(&mut self, m: &str) -> fdo::Result<()> {
-        let mode = match Mode::try_from(m) {
-            Ok(mode) => mode,
-            Err(err) => return Err(fdo::Error::InvalidArgs(err.to_string())),
-        };
-        self.manager.set_mode(mode).await.map_err(to_zbus_fdo_error)
-    }
 }
 
 #[interface(name = "com.steampowered.SteamOSManager1.AmbientLightSensor1")]
@@ -1643,7 +1610,6 @@ pub(crate) async fn create_interfaces(
 
     job_manager.send(JobManagerCommand::MirrorConnection(system.clone()))?;
 
-    let audio_manager = AudioManager1::new().await?;
     let als = AmbientLightSensor1 {
         proxy: proxy.clone(),
     };
@@ -1765,10 +1731,6 @@ pub(crate) async fn create_interfaces(
     }
 
     object_server.at(MANAGER_PATH, manager2).await?;
-
-    if AudioManager::is_supported().await? {
-        object_server.at(MANAGER_PATH, audio_manager).await?;
-    }
 
     let mut session_manager_service = None;
     let mut screenreader_setup_service = None;

@@ -11,7 +11,6 @@
 
 // Optional interfaces
 mod ambient_light_sensor1;
-mod audio1;
 mod battery_charge_limit1;
 mod cpu_boost1;
 mod cpu_scaling1;
@@ -37,7 +36,6 @@ mod wifi_debug1;
 mod wifi_debug_dump1;
 mod wifi_power_management1;
 pub use crate::ambient_light_sensor1::AmbientLightSensor1Proxy;
-pub use crate::audio1::Audio1Proxy;
 pub use crate::battery_charge_limit1::BatteryChargeLimit1Proxy;
 pub use crate::cpu_boost1::CpuBoost1Proxy;
 pub use crate::cpu_scaling1::CpuScaling1Proxy;
