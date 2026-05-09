@@ -7,6 +7,7 @@
 
 use anyhow::{Result, anyhow, bail, ensure};
 use async_trait::async_trait;
+use nix::errno::Errno;
 use num_enum::TryFromPrimitive;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -702,15 +703,21 @@ async fn find_battery_charge_path() -> Result<PathBuf> {
     bail!("Battery not found");
 }
 
+fn parse_max_charge_level(result: std::io::Result<String>) -> Result<i32> {
+    match result {
+        Ok(s) => s
+            .trim()
+            .parse()
+            .map_err(|e| anyhow!("Error parsing value: {e}")),
+        // asus-wmi may return ENODATA until userspace writes a value
+        Err(e) if e.raw_os_error().map(Errno::from_raw) == Some(Errno::ENODATA) => Ok(-1),
+        Err(e) => Err(anyhow!("Error reading sysfs: {e}")),
+    }
+}
+
 pub(crate) async fn get_max_charge_level() -> Result<i32> {
     let path = find_battery_charge_path().await?;
-
-    read_to_string(path)
-        .await
-        .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
-        .trim()
-        .parse()
-        .map_err(|e| anyhow!("Error parsing value: {e}"))
+    parse_max_charge_level(read_to_string(path).await)
 }
 
 pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver<SysfsWritten>> {
@@ -1476,6 +1483,12 @@ pub(crate) mod test {
         );
 
         assert_eq!(get_max_charge_level().await.unwrap(), 80);
+    }
+
+    #[test]
+    fn parse_max_charge_level_enodata_is_unknown() {
+        let err = std::io::Error::from_raw_os_error(Errno::ENODATA as i32);
+        assert_eq!(parse_max_charge_level(Err(err)).unwrap(), -1);
     }
 
     #[tokio::test]
