@@ -1623,7 +1623,7 @@ pub(crate) struct UserServices {
     pub signal_relay: SignalRelayService,
     pub session_manager: Option<SessionManagerService>,
     pub screenreader_setup: Option<ScreenReaderSetupService>,
-    pub cecd: Result<CecdService>,
+    pub cecd: Option<CecdService>,
 }
 
 pub(crate) async fn create_interfaces(
@@ -1663,8 +1663,12 @@ pub(crate) async fn create_interfaces(
         order: SerialOrderValidator::default(),
     };
 
-    let hdmi_cec = HdmiCec1::new(&session).await?;
-    let cecd_service = CecdService::new(&system, &hdmi_cec.hdmi_cec).await;
+    let hdmi_cec = HdmiCec1::new(&session).await.ok();
+    let cecd_service = if let Some(hdmi_cec) = hdmi_cec.as_ref() {
+        CecdService::new(&system, &hdmi_cec.hdmi_cec).await.ok()
+    } else {
+        None
+    };
 
     let manager2 = Manager2 {
         proxy: proxy.clone(),
@@ -1756,7 +1760,7 @@ pub(crate) async fn create_interfaces(
         Err(e) => warn!("Can't add GpuPowerProfile1 interface: {e}"),
     }
 
-    if hdmi_cec.hdmi_cec.get_enabled_state().await.is_ok() {
+    if let Some(hdmi_cec) = hdmi_cec {
         object_server.at(MANAGER_PATH, hdmi_cec).await?;
     }
 
@@ -1835,7 +1839,7 @@ mod test {
     use crate::power::{BatteryChargeLimitMethod, TdpLimitingMethod, TdpManagerService};
     use crate::proxy::{LowPowerMode1Proxy, RemoteInterface1Proxy};
     use crate::session::{SessionManagerState, make_managed};
-    use crate::systemd::test::{MockManager, MockUnit};
+    use crate::systemd::test::MockManager;
     use crate::{path, testing};
 
     use anyhow::{anyhow, bail, ensure};
@@ -1966,6 +1970,17 @@ mod test {
         })
     }
 
+    #[derive(Debug)]
+    struct MockCecd {}
+
+    #[interface(name = "com.steampowered.CecDaemon1.Config1")]
+    impl MockCecd {
+        #[zbus(property)]
+        fn wake_tv(&self) -> bool {
+            true
+        }
+    }
+
     async fn start<S: TestSetup + Sync + Send>(mut config: TestConfig<S>) -> Result<TestHandle<S>> {
         let mut handle = testing::start();
         let (tx_ctx, mut rx_ctx) = channel::<UserContext>();
@@ -2001,22 +2016,19 @@ mod test {
         }
         let connection = handle.new_dbus().await?;
         connection.request_name("org.freedesktop.systemd1").await?;
-        sleep(Duration::from_millis(10)).await;
+        connection
+            .request_name("com.steampowered.CecDaemon1")
+            .await?;
         {
             let object_server = connection.object_server();
             object_server
                 .at("/org/freedesktop/systemd1", MockManager::default())
                 .await?;
-
-            let mut prc = MockUnit::default();
-            prc.unit_file = String::from("disabled");
             object_server
-                .at(
-                    "/org/freedesktop/systemd1/unit/plasma_2dremotecontrollers_2eservice",
-                    prc,
-                )
+                .at("/com/steampowered/CecDaemon1/Config1", MockCecd {})
                 .await?;
         }
+        sleep(Duration::from_millis(10)).await;
 
         let exe_path = path("exe");
         write(&exe_path, "").await?;

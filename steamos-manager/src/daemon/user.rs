@@ -206,10 +206,8 @@ pub async fn daemon() -> Result<()> {
     } else if let Err(e) = tdp_service {
         info!("TdpManagerService not available: {e}");
     }
-    if let Ok(service) = services.cecd {
+    if let Some(service) = services.cecd {
         daemon.add_service(service);
-    } else if let Err(e) = services.cecd {
-        info!("CecdService not available: {e}");
     }
 
     daemon.run(context).await

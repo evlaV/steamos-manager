@@ -220,6 +220,7 @@ impl<'dbus> SystemdUnit<'dbus> {
         Ok(!res.is_empty())
     }
 
+    #[allow(unused)]
     pub async fn mask(&self) -> Result<bool> {
         let res = self
             .manager
@@ -228,6 +229,7 @@ impl<'dbus> SystemdUnit<'dbus> {
         Ok(!res.is_empty())
     }
 
+    #[allow(unused)]
     pub async fn unmask(&self) -> Result<bool> {
         let res = self
             .manager
