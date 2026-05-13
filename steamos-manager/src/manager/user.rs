@@ -2099,17 +2099,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_matches_audio1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<AudioManager1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
     async fn interface_matches_ambient_light_sensor1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2132,13 +2121,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_missing_battery_charge_limit() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<BatteryChargeLimit1>(&test.connection).await);
-    }
-
-    #[tokio::test]
     async fn interface_matches_cpu_boost1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2150,13 +2132,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_missing_cpu_boost1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<CpuBoost1>(&test.connection).await);
-    }
-
-    #[tokio::test]
     async fn interface_matches_cpu_scaling1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2165,31 +2140,6 @@ mod test {
                 .await
                 .unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_cpu_scaling1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<CpuScaling1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_cpu_scheduler1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<CpuScheduler1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_cpu_scheduler1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<CpuScheduler1>(&test.connection).await);
     }
 
     #[tokio::test]
@@ -2296,13 +2246,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_missing_gpu_performance_level1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<GpuPerformanceLevel1>(&test.connection).await);
-    }
-
-    #[tokio::test]
     async fn interface_matches_gpu_power_profile1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2314,10 +2257,44 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_missing_gpu_power_profile1() {
+    async fn interface_matches_tdp_limit1() {
+        let mut test = start(TestConfig::all()).await.expect("start");
+
+        let TdpManagerCommand::IsActive(reply) =
+            test.rx_tdp.as_mut().unwrap().recv().await.unwrap()
+        else {
+            panic!();
+        };
+        reply.send(Ok(true)).unwrap();
+        sleep(Duration::from_millis(1)).await;
+
+        assert!(
+            test_interface_matches::<TdpLimit1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_tdp_limit1() {
         let test = start(TestConfig::none()).await.expect("start");
 
-        assert!(test_interface_missing::<GpuPowerProfile1>(&test.connection).await);
+        assert!(test_interface_missing::<TdpLimit1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_inactive_tdp_limit1() {
+        let mut test = start(TestConfig::all()).await.expect("start");
+
+        let TdpManagerCommand::IsActive(reply) =
+            test.rx_tdp.as_mut().unwrap().recv().await.unwrap()
+        else {
+            panic!();
+        };
+        reply.send(Ok(false)).unwrap();
+        sleep(Duration::from_millis(1)).await;
+
+        assert!(test_interface_missing::<TdpLimit1>(&test.connection).await);
     }
 
     #[tokio::test]
@@ -2329,13 +2306,6 @@ mod test {
                 .await
                 .unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_hdmi_cec1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<HdmiCec1>(&test.connection).await);
     }
 
     #[tokio::test]
@@ -2368,6 +2338,17 @@ mod test {
     }
 
     #[tokio::test]
+    async fn interface_matches_session_management1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<SessionManagement1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
     async fn interface_matches_performance_profile1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2394,60 +2375,6 @@ mod test {
                 .await
                 .unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn interface_matches_screen_reader0() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<ScreenReader0>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_screen_reader0() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<ScreenReader0>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_screen_reader1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<ScreenReader1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_screen_reader1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<ScreenReader1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_session_management1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<SessionManagement1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_session_management1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<SessionManagement1>(&test.connection).await);
     }
 
     #[tokio::test]
@@ -2503,47 +2430,6 @@ mod test {
         .expect("start");
 
         assert!(test_interface_missing::<Storage1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_tdp_limit1() {
-        let mut test = start(TestConfig::all()).await.expect("start");
-
-        let TdpManagerCommand::IsActive(reply) =
-            test.rx_tdp.as_mut().unwrap().recv().await.unwrap()
-        else {
-            panic!();
-        };
-        reply.send(Ok(true)).unwrap();
-        sleep(Duration::from_millis(1)).await;
-
-        assert!(
-            test_interface_matches::<TdpLimit1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_tdp_limit1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<TdpLimit1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_inactive_tdp_limit1() {
-        let mut test = start(TestConfig::all()).await.expect("start");
-
-        let TdpManagerCommand::IsActive(reply) =
-            test.rx_tdp.as_mut().unwrap().recv().await.unwrap()
-        else {
-            panic!();
-        };
-        reply.send(Ok(false)).unwrap();
-        sleep(Duration::from_millis(1)).await;
-
-        assert!(test_interface_missing::<TdpLimit1>(&test.connection).await);
     }
 
     #[tokio::test]
@@ -2619,18 +2505,18 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_matches_wifi_backend1() {
+    async fn interface_matches_wifi_power_management1() {
         let test = start(TestConfig::all()).await.expect("start");
 
         assert!(
-            test_interface_matches::<WifiBackend1>(&test.connection)
+            test_interface_matches::<WifiPowerManagement1>(&test.connection)
                 .await
                 .unwrap()
         );
     }
 
     #[tokio::test]
-    async fn interface_matches_wifi_debug1() {
+    async fn interface_matches_wifi_debug() {
         let test = start(TestConfig::all()).await.expect("start");
 
         assert!(
@@ -2641,36 +2527,11 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_missing_wifi_debug1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<WifiDebug1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_wifi_debug_dump1() {
+    async fn interface_matches_wifi_debug_dump() {
         let test = start(TestConfig::all()).await.expect("start");
 
         assert!(
             test_interface_matches::<WifiDebugDump1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_wifi_debug_dump1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<WifiDebugDump1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_wifi_power_management1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<WifiPowerManagement1>(&test.connection)
                 .await
                 .unwrap()
         );
