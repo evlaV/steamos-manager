@@ -122,7 +122,7 @@
         Enumerate the supported CPU schedulers on the system.
     -->
     <property name="AvailableCpuSchedulers" type="as" access="read"/>
-    
+
     <!--
         CpuScheduler:
 
@@ -377,7 +377,7 @@
   </interface>
 
   <!--
-      com.steampowered.SteamOSManager1.ScreenReader1
+      com.steampowered.SteamOSManager1.ScreenReader0
       @short_description: Optional interface for managing a screen reader.
 
       This interface is considered unstable and may change between verisons.
@@ -521,12 +521,12 @@
 
     <!--
         The currently used voice locale.
-      
+
         Voices property only gives list for this locale when used.
         Valid VoiceLocales can be found from the VoiceLocales property.
     -->
     <property name="VoiceLocale" type="s" access="readwrite"/>
-    
+
     <!--
         Voice
 
@@ -538,7 +538,7 @@
 
     <!--
         Get the list of voices for the current locale
-      
+
         @voices: A list of voice names for the current locale.
     -->
     <method name="GetVoices">
@@ -547,7 +547,7 @@
 
     <!--
         Get the list of voices for a given locale
-      
+
         @locale: The locale to get voices for.
         @voices: A list of voice names for the given locale.
     -->
@@ -773,7 +773,7 @@
 
   <!--
       com.steampowered.SteamOSManager1.WifiBackend1
-      @short_description: Optional interface for getting and setting Wi-Fi backend. 
+      @short_description: Optional interface for getting and setting Wi-Fi backend.
   -->
   <interface name="com.steampowered.SteamOSManager1.WifiBackend1">
     <!--
