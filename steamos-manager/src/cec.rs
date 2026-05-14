@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{Error, Result, bail, ensure};
+use anyhow::{Error, Result, bail};
 use async_trait::async_trait;
 use cecd_proxy::{CecDevice1Proxy, Config1Proxy};
 use linux_cec::{PhysicalAddress, VendorId};
@@ -20,6 +20,7 @@ use std::time::Duration;
 use strum::{Display, EnumString, VariantNames};
 use tokio::fs::{File, create_dir_all, remove_file, write};
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::select;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use toml;
@@ -41,6 +42,7 @@ pub enum HdmiCecState {
     Disabled = 0,
     ControlOnly = 1,
     ControlAndWake = 2,
+    Extended = 3,
 }
 
 #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
@@ -77,6 +79,7 @@ impl fmt::Display for HdmiCecState {
             HdmiCecState::Disabled => write!(f, "Disabled"),
             HdmiCecState::ControlOnly => write!(f, "ControlOnly"),
             HdmiCecState::ControlAndWake => write!(f, "ControlAndWake"),
+            HdmiCecState::Extended => write!(f, "Extended"),
         }
     }
 }
@@ -88,6 +91,7 @@ impl HdmiCecState {
             HdmiCecState::Disabled => "disabled",
             HdmiCecState::ControlOnly => "control-only",
             HdmiCecState::ControlAndWake => "control-and-wake",
+            HdmiCecState::Extended => "extended",
         }
     }
 }
@@ -95,7 +99,9 @@ impl HdmiCecState {
 #[derive(Serialize, Clone, Debug, Default)]
 struct CecdConfigFragment {
     pub wake_tv: bool,
+    pub suspend_tv: bool,
     pub uinput: bool,
+    pub allow_standby: bool,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -153,10 +159,13 @@ impl<'dbus> HdmiCecControl<'dbus> {
     pub async fn get_enabled_state(&self) -> Result<HdmiCecState> {
         let wake = self.proxy.wake_tv().await?;
         let control = self.proxy.uinput().await?;
-        Ok(match (control, wake) {
-            (true, true) => HdmiCecState::ControlAndWake,
-            (true, false) => HdmiCecState::ControlOnly,
-            (false, _) => HdmiCecState::Disabled,
+        let suspend_tv = self.proxy.suspend_tv().await?;
+        let allow_standby = self.proxy.allow_standby().await?;
+        Ok(match (control, wake, suspend_tv || allow_standby) {
+            (_, _, true) => HdmiCecState::Extended,
+            (true, true, false) => HdmiCecState::ControlAndWake,
+            (true, false, false) => HdmiCecState::ControlOnly,
+            (false, _, false) => HdmiCecState::Disabled,
         })
     }
 
@@ -164,11 +173,17 @@ impl<'dbus> HdmiCecControl<'dbus> {
         let fragment = CecdConfigFragment {
             wake_tv: state == HdmiCecState::ControlAndWake,
             uinput: state != HdmiCecState::Disabled,
+            suspend_tv: false,
+            allow_standby: false,
         };
+        self.write_config(&fragment).await
+    }
+
+    async fn write_config(&self, config: &CecdConfigFragment) -> Result<()> {
         let Some(home) = BaseDirectories::new().get_config_home() else {
             bail!("No home directory found");
         };
-        let fragment = toml::to_string(&fragment)?;
+        let fragment = toml::to_string(config)?;
         let path = home.join(CECD_CONFIG_DIR);
         create_dir_all(&path).await?;
         let path = path.join(CECD_RUNTIME_CONFIG);
@@ -178,8 +193,61 @@ impl<'dbus> HdmiCecControl<'dbus> {
         Ok(())
     }
 
+    async fn get_config(&self) -> Result<CecdConfigFragment> {
+        Ok(CecdConfigFragment {
+            uinput: self.proxy.uinput().await?,
+            suspend_tv: self.proxy.suspend_tv().await?,
+            allow_standby: self.proxy.allow_standby().await?,
+            wake_tv: self.proxy.wake_tv().await?,
+        })
+    }
+
     pub async fn get_enable_control(&self) -> Result<bool> {
         Ok(self.proxy.uinput().await?)
+    }
+
+    pub async fn set_enable_control(&self, enable: bool) -> Result<()> {
+        let config = CecdConfigFragment {
+            uinput: enable,
+            ..self.get_config().await?
+        };
+        self.write_config(&config).await
+    }
+
+    pub async fn get_suspend_tv(&self) -> Result<bool> {
+        Ok(self.proxy.suspend_tv().await?)
+    }
+
+    pub async fn set_suspend_tv(&self, enable: bool) -> Result<()> {
+        let config = CecdConfigFragment {
+            suspend_tv: enable,
+            ..self.get_config().await?
+        };
+        self.write_config(&config).await
+    }
+
+    pub async fn get_suspend_device(&self) -> Result<bool> {
+        Ok(self.proxy.allow_standby().await?)
+    }
+
+    pub async fn set_suspend_device(&self, enable: bool) -> Result<()> {
+        let config = CecdConfigFragment {
+            allow_standby: enable,
+            ..self.get_config().await?
+        };
+        self.write_config(&config).await
+    }
+
+    pub async fn get_wake_tv(&self) -> Result<bool> {
+        Ok(self.proxy.wake_tv().await?)
+    }
+
+    pub async fn set_wake_tv(&self, enable: bool) -> Result<()> {
+        let config = CecdConfigFragment {
+            wake_tv: enable,
+            ..self.get_config().await?
+        };
+        self.write_config(&config).await
     }
 }
 
@@ -297,7 +365,8 @@ impl HdmiCecHwController for CrosEcHwController {
 
 pub(crate) struct CecdService {
     manager: RootManagerProxy<'static>,
-    device: CecDevice1Proxy<'static>,
+    device: Option<CecDevice1Proxy<'static>>,
+    object_manager: ObjectManagerProxy<'static>,
 }
 
 impl CecdService {
@@ -306,10 +375,6 @@ impl CecdService {
         hdmi_cec: &HdmiCecControl<'_>,
     ) -> Result<CecdService> {
         let manager = RootManagerProxy::new(system).await?;
-        ensure!(
-            manager.hdmi_cec_can_awaken().await?,
-            "No supported cec hardware backend found"
-        );
         let object_manager = ObjectManagerProxy::new(
             &hdmi_cec.connection,
             "com.steampowered.CecDaemon1",
@@ -317,8 +382,18 @@ impl CecdService {
         )
         .await?;
 
+        let mut serivce = CecdService {
+            manager,
+            device: None,
+            object_manager,
+        };
+        serivce.rescan().await?;
+        Ok(serivce)
+    }
+
+    async fn rescan(&mut self) -> Result<()> {
         let mut device = None;
-        for (path, ifaces) in object_manager.get_managed_objects().await? {
+        for (path, ifaces) in self.object_manager.get_managed_objects().await? {
             if !path
                 .as_str()
                 .starts_with("/com/steampowered/CecDaemon1/Devices")
@@ -328,24 +403,37 @@ impl CecdService {
             if !ifaces.contains_key("com.steampowered.CecDaemon1.CecDevice1") {
                 continue;
             }
+
+            // Reuse the old device if present
+            if let Some(old_device) = &self.device
+                && *old_device.inner().path() == *path
+            {
+                return Ok(());
+            }
+
             device = Some(
-                CecDevice1Proxy::builder(&hdmi_cec.connection)
+                CecDevice1Proxy::builder(self.object_manager.inner().connection())
                     .path(path)?
                     .build()
                     .await?,
             );
         }
-
-        let Some(device) = device else {
-            bail!("No CEC device found");
-        };
-
-        Ok(CecdService { manager, device })
+        self.device = device;
+        Ok(())
     }
 
     async fn reconfigure(&self) -> Result<()> {
-        let phys_addr = self.device.physical_address().await?;
-        self.manager.set_hdmi_cec_phys_addr(phys_addr).await?;
+        if self.manager.hdmi_cec_can_awaken().await? {
+            let new_phys_addr = if let Some(device) = self.device.as_ref() {
+                device.physical_address().await?
+            } else {
+                0xFFFF
+            };
+            let old_phys_addr = self.manager.hdmi_cec_phys_addr().await?;
+            if new_phys_addr != old_phys_addr {
+                self.manager.set_hdmi_cec_phys_addr(new_phys_addr).await?;
+            }
+        }
         Ok(())
     }
 }
@@ -354,15 +442,61 @@ impl Service for CecdService {
     const NAME: &'static str = "cecd-listener";
 
     async fn run(&mut self) -> Result<()> {
-        let mut phys_addr_changed = self.device.receive_physical_address_changed().await;
+        self.rescan().await?;
+        let mut phys_addr_changed = if let Some(device) = self.device.as_ref() {
+            Some(device.receive_physical_address_changed().await)
+        } else {
+            None
+        };
+        let mut device_added = self.object_manager.receive_interfaces_added().await?;
+        let mut device_removed = self.object_manager.receive_interfaces_removed().await?;
+        self.reconfigure().await?;
         loop {
-            self.reconfigure().await?;
-
-            let Some(_) = phys_addr_changed.next().await else {
-                break;
-            };
+            if let (Some(pac_stream), Some(device)) =
+                (phys_addr_changed.as_mut(), self.device.as_ref())
+            {
+                select! {
+                    Some(_) = pac_stream.next() => self.reconfigure().await?,
+                    Some(signal) = device_removed.next() => if let Ok(args) = signal.args() {
+                        if &args.object_path != device.inner().path() {
+                            continue;
+                        }
+                        if !args.interfaces
+                                .iter()
+                                .any(|iface| iface == "com.steampowered.CecDaemon1.CecDevice1") {
+                            continue;
+                        }
+                        self.device = None;
+                        self.rescan().await?;
+                        phys_addr_changed = if let Some(device) = self.device.as_ref() {
+                            Some(device.receive_physical_address_changed().await)
+                        } else {
+                            None
+                        };
+                    },
+                    _ = device_added.next() => (), // Drain these ever if we're not using them
+                };
+            } else {
+                select! {
+                    Some(signal) = device_added.next() => if let Ok(args) = signal.args() {
+                        if !args.object_path.starts_with("/com/steampowered/CecDaemon1/Devices/") {
+                            continue;
+                        }
+                        if !args.interfaces_and_properties
+                                .contains_key("com.steampowered.CecDaemon1.CecDevice1") {
+                            continue;
+                        }
+                        self.rescan().await?;
+                        phys_addr_changed = if let Some(device) = self.device.as_ref() {
+                            Some(device.receive_physical_address_changed().await)
+                        } else {
+                            None
+                        };
+                    },
+                    _ = device_removed.next() => (), // Drain these even if we're not using them
+                };
+            }
         }
-        Ok(())
     }
 }
 
@@ -406,7 +540,8 @@ mod test {
             HdmiCecState::ControlAndWake.to_human_readable(),
             "control-and-wake"
         );
-        assert!(HdmiCecState::try_from(3).is_err());
+        assert_eq!(HdmiCecState::Extended.to_human_readable(), "extended");
+        assert!(HdmiCecState::try_from(4).is_err());
         assert!(HdmiCecState::from_str("working").is_err());
     }
 
@@ -683,8 +818,9 @@ mod test {
                 proxy,
             },
         )
-        .await;
-        assert!(service.is_err());
+        .await
+        .unwrap();
+        assert!(!service.manager.hdmi_cec_can_awaken().await.unwrap());
     }
 
     #[tokio::test]
@@ -705,8 +841,9 @@ mod test {
                 proxy,
             },
         )
-        .await;
-        assert!(service.is_err());
+        .await
+        .unwrap();
+        assert!(service.device.is_none());
     }
 
     #[tokio::test]

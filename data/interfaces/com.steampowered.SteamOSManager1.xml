@@ -241,9 +241,63 @@
 
         The current state of HDMI-CEC features on the system.
 
-        Valid states: 0 = Disabled, 1 = Control Only, 2 = Control And Wake
+        Valid states: 0 = Disabled, 1 = Control Only, 2 = Control And Wake,
+        3 = Extended state (see com.steampowered.SteamOSManager1.HdmiCec2).
     -->
     <property name="HdmiCecState" type="u" access="readwrite"/>
+
+  </interface>
+
+  <!--
+      com.steampowered.SteamOSManager1.HdmiCec2
+      @short_description: Optional interface for HDMI-CEC.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.HdmiCec2">
+
+    <!--
+        EnableControl:
+
+        Enable or disable remote controls relaying commands
+    -->
+    <property name="EnableControl" type="b" access="readwrite"/>
+
+    <!--
+        SuspendTv:
+
+        Should the TV be suspended when the device sleeps
+    -->
+    <property name="SuspendTv" type="b" access="readwrite"/>
+
+    <!--
+        SuspendDevice:
+
+        Should the device be suspended when the TV sleeps
+    -->
+    <property name="SuspendDevice" type="b" access="readwrite"/>
+
+    <!--
+        WakeTv:
+
+        Should the TV be woken when the device wakes
+    -->
+    <property name="WakeTv" type="b" access="readwrite"/>
+
+    <!--
+        WakeDevice:
+
+        Should the device be woken when the TV wakes. Note that not all
+        hardware supports this setting. Please see the WakeDeviceSupported
+        property to see if this is supported
+    -->
+    <property name="WakeDevice" type="b" access="readwrite"/>
+
+    <!--
+        WakeDeviceSupported:
+
+        Does the hardware support configuring if the device should be woken
+        when the TV wakes
+    -->
+    <property name="WakeDeviceSupported" type="b" access="read"/>
 
   </interface>
 

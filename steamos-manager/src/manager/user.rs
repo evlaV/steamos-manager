@@ -8,21 +8,25 @@
 
 use anyhow::{Error, Result};
 use async_trait::async_trait;
+use cecd_proxy::Config1Proxy;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs::try_exists;
+use tokio::select;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::task::{JoinHandle, spawn};
+use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 use zbus::fdo::{self, DBusProxy};
 use zbus::message::Header;
 use zbus::names::{BusName, OwnedBusName, UniqueName};
 use zbus::object_server::{Interface, SignalEmitter};
-use zbus::proxy::{Builder, CacheProperties};
+use zbus::proxy::{Builder, CacheProperties, PropertyStream};
 use zbus::zvariant::{Fd, OwnedObjectPath};
 use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 
@@ -40,6 +44,7 @@ use crate::hardware::{
     SteamDeckVariant, device_config, device_type, device_variant, steam_deck_variant,
 };
 use crate::job::JobManagerCommand;
+use crate::manager::root::{RootManagerProxy, SteamOSManagerSignals};
 use crate::manager::{MANAGER_PATH, RemoteInterface, RemoteInterfaceConfig, RemoteOwner};
 use crate::path;
 use crate::platform::platform_config;
@@ -173,7 +178,12 @@ pub(crate) struct TdpLimit1 {
 }
 
 struct HdmiCec1 {
-    hdmi_cec: HdmiCecControl<'static>,
+    hdmi_cec: Arc<Mutex<HdmiCecControl<'static>>>,
+}
+
+struct HdmiCec2 {
+    hdmi_cec: Arc<Mutex<HdmiCecControl<'static>>>,
+    manager: RootManagerProxy<'static>,
 }
 
 struct LowPowerMode1 {
@@ -268,6 +278,7 @@ struct WifiPowerManagement1 {
 
 pub(crate) struct SignalRelayService {
     proxy: Proxy<'static>,
+    config1: Option<Config1Proxy<'static>>,
     session: Connection,
 }
 
@@ -574,18 +585,11 @@ impl GpuPowerProfile1 {
     }
 }
 
-impl HdmiCec1 {
-    async fn new(connection: &Connection) -> Result<HdmiCec1> {
-        let hdmi_cec = HdmiCecControl::new(connection).await?;
-        Ok(HdmiCec1 { hdmi_cec })
-    }
-}
-
 #[interface(name = "com.steampowered.SteamOSManager1.HdmiCec1")]
 impl HdmiCec1 {
     #[zbus(property)]
     async fn hdmi_cec_state(&self) -> fdo::Result<u32> {
-        match self.hdmi_cec.get_enabled_state().await {
+        match self.hdmi_cec.lock().await.get_enabled_state().await {
             Ok(state) => Ok(state as u32),
             Err(e) => Err(to_zbus_fdo_error(e)),
         }
@@ -603,11 +607,129 @@ impl HdmiCec1 {
         };
         let _: () = self
             .hdmi_cec
+            .lock()
+            .await
             .set_enabled_state(state)
             .await
             .inspect_err(|message| error!("Error setting CEC state: {message}"))
             .map_err(to_zbus_error)?;
         self.hdmi_cec_state_changed(&ctx).await
+    }
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.HdmiCec2")]
+impl HdmiCec2 {
+    #[zbus(property)]
+    async fn enable_control(&self) -> fdo::Result<bool> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .get_enable_control()
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn set_enable_control(&self, enable: bool) -> fdo::Result<()> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .set_enable_control(enable)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn suspend_tv(&self) -> fdo::Result<bool> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .get_suspend_tv()
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn set_suspend_tv(&self, enable: bool) -> fdo::Result<()> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .set_suspend_tv(enable)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn suspend_device(&self) -> fdo::Result<bool> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .get_suspend_device()
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn set_suspend_device(&self, enable: bool) -> fdo::Result<()> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .set_suspend_device(enable)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn wake_tv(&self) -> fdo::Result<bool> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .get_wake_tv()
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn set_wake_tv(&self, enable: bool) -> fdo::Result<()> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .set_wake_tv(enable)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn wake_device(&self) -> fdo::Result<bool> {
+        if self
+            .manager
+            .hdmi_cec_can_awaken()
+            .await
+            .map_err(to_zbus_fdo_error)?
+        {
+            self.manager
+                .hdmi_cec_awaken()
+                .await
+                .map_err(to_zbus_fdo_error)
+        } else {
+            Ok(false)
+        }
+    }
+
+    #[zbus(property)]
+    async fn set_wake_device(&self, enable: bool) -> fdo::Result<()> {
+        self.manager
+            .set_hdmi_cec_awaken(enable)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property(emits_changed_signal = "const"))]
+    async fn wake_device_supported(&self) -> fdo::Result<bool> {
+        self.manager
+            .hdmi_cec_can_awaken()
+            .await
+            .map_err(to_zbus_fdo_error)
     }
 }
 
@@ -1376,25 +1498,97 @@ impl Service for SignalRelayService {
     const NAME: &'static str = "signal-relay";
 
     async fn run(&mut self) -> Result<()> {
-        let Ok(battery_charge_limit) = self
+        let mut battery_charge_limit1 = self
             .session
             .object_server()
             .interface::<_, BatteryChargeLimit1>(MANAGER_PATH)
             .await
-        else {
-            return Ok(());
-        };
-        let ctx = battery_charge_limit.signal_emitter();
+            .ok();
+        let mut hdmi_cec1 = self
+            .session
+            .object_server()
+            .interface::<_, HdmiCec1>(MANAGER_PATH)
+            .await
+            .ok();
+        let mut hdmi_cec2 = self
+            .session
+            .object_server()
+            .interface::<_, HdmiCec2>(MANAGER_PATH)
+            .await
+            .ok();
 
         let mut max_charge_level_changed =
             self.proxy.receive_signal("MaxChargeLevelChanged").await?;
+
+        let mut wake_tv_changed;
+        let mut suspend_tv_changed;
+        let mut allow_standby_changed;
+        if let Some(config1) = self.config1.as_ref() {
+            wake_tv_changed = Some(config1.receive_wake_tv_changed().await);
+            suspend_tv_changed = Some(config1.receive_suspend_tv_changed().await);
+            allow_standby_changed = Some(config1.receive_allow_standby_changed().await);
+        } else {
+            wake_tv_changed = None;
+            suspend_tv_changed = None;
+            allow_standby_changed = None;
+        }
+
         loop {
-            max_charge_level_changed.next().await;
-            battery_charge_limit
-                .get()
-                .await
-                .max_charge_level_changed(ctx)
-                .await?;
+            select! {
+                _ = max_charge_level_changed.next() => {
+                    if let Some(battery_charge_limit1) = battery_charge_limit1.as_mut() {
+                        battery_charge_limit1.signal_emitter().max_charge_level_changed().await?;
+                    }
+                },
+                Some(_) = SignalRelayService::expect(wake_tv_changed.as_mut()) => {
+                    if let Some(hdmi_cec1) = hdmi_cec1.as_mut() {
+                        let emitter = hdmi_cec1.signal_emitter();
+                        hdmi_cec1.get().await.hdmi_cec_state_changed(emitter).await?;
+                    }
+                    if let Some(hdmi_cec2) = hdmi_cec2.as_mut() {
+                        let emitter = hdmi_cec2.signal_emitter();
+                        hdmi_cec2.get().await.wake_tv_changed(emitter).await?;
+                    }
+                },
+                Some(_) = SignalRelayService::expect(suspend_tv_changed.as_mut()) => {
+                    if let Some(hdmi_cec1) = hdmi_cec1.as_mut() {
+                        let emitter = hdmi_cec1.signal_emitter();
+                        hdmi_cec1.get().await.hdmi_cec_state_changed(emitter).await?;
+                    }
+                    if let Some(hdmi_cec2) = hdmi_cec2.as_mut() {
+                        let emitter = hdmi_cec2.signal_emitter();
+                        hdmi_cec2.get().await.suspend_tv_changed(emitter).await?;
+                    }
+                },
+                Some(_) = SignalRelayService::expect(allow_standby_changed.as_mut()) => {
+                    if let Some(hdmi_cec1) = hdmi_cec1.as_mut() {
+                        let emitter = hdmi_cec1.signal_emitter();
+                        hdmi_cec1.get().await.hdmi_cec_state_changed(emitter).await?;
+                    }
+                    if let Some(hdmi_cec2) = hdmi_cec2.as_mut() {
+                        let emitter = hdmi_cec2.signal_emitter();
+                        hdmi_cec2.get().await.suspend_device_changed(emitter).await?;
+                    }
+                },
+            }
+        }
+    }
+}
+
+impl SignalRelayService {
+    async fn expect<'a, T>(
+        signal: Option<&mut PropertyStream<'a, T>>,
+    ) -> Option<<PropertyStream<'a, T> as tokio_stream::Stream>::Item>
+    where
+        PropertyStream<'a, T>: StreamExt,
+        T: Unpin,
+    {
+        if let Some(signal) = signal {
+            signal.next().await
+        } else {
+            // XXX: Is there a better way to handle this?
+            sleep(Duration::from_secs(3600 * 24)).await;
+            None
         }
     }
 }
@@ -1607,6 +1801,7 @@ pub(crate) async fn create_interfaces(
         .cache_properties(CacheProperties::No)
         .build()
         .await?;
+    let root_manager = RootManagerProxy::new(&system).await?;
 
     job_manager.send(JobManagerCommand::MirrorConnection(system.clone()))?;
 
@@ -1629,12 +1824,16 @@ pub(crate) async fn create_interfaces(
         order: SerialOrderValidator::default(),
     };
 
-    let hdmi_cec = HdmiCec1::new(&session).await.ok();
-    let cecd_service = if let Some(hdmi_cec) = hdmi_cec.as_ref() {
-        CecdService::new(&system, &hdmi_cec.hdmi_cec).await.ok()
+    let hdmi_cec = HdmiCecControl::new(&session).await.ok();
+    let cecd_service;
+    let hdmi_cec_config;
+    if let Some(hdmi_cec) = hdmi_cec.as_ref() {
+        cecd_service = CecdService::new(&system, hdmi_cec).await.ok();
+        hdmi_cec_config = Config1Proxy::new(&session).await.ok();
     } else {
-        None
-    };
+        cecd_service = None;
+        hdmi_cec_config = None;
+    }
 
     let manager2 = Manager2 {
         proxy: proxy.clone(),
@@ -1727,7 +1926,24 @@ pub(crate) async fn create_interfaces(
     }
 
     if let Some(hdmi_cec) = hdmi_cec {
-        object_server.at(MANAGER_PATH, hdmi_cec).await?;
+        let hdmi_cec = Arc::new(Mutex::new(hdmi_cec));
+        object_server
+            .at(
+                MANAGER_PATH,
+                HdmiCec1 {
+                    hdmi_cec: hdmi_cec.clone(),
+                },
+            )
+            .await?;
+        object_server
+            .at(
+                MANAGER_PATH,
+                HdmiCec2 {
+                    hdmi_cec,
+                    manager: root_manager,
+                },
+            )
+            .await?;
     }
 
     object_server.at(MANAGER_PATH, manager2).await?;
@@ -1776,6 +1992,7 @@ pub(crate) async fn create_interfaces(
         signal_relay: SignalRelayService {
             proxy,
             session: session.clone(),
+            config1: hdmi_cec_config,
         },
         session_manager: session_manager_service,
         screenreader_setup: screenreader_setup_service,
@@ -2331,6 +2548,26 @@ mod test {
         let test = start(TestConfig::none()).await.expect("start");
 
         assert!(test_interface_missing::<HdmiCec1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_hdmi_cec2() {
+        let test = start(TestConfig::only_setup(CecdSetup {}))
+            .await
+            .expect("start");
+
+        assert!(
+            test_interface_matches::<HdmiCec2>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_hdmi_cec2() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<HdmiCec2>(&test.connection).await);
     }
 
     #[tokio::test]
