@@ -56,6 +56,8 @@ const CPU_POLICY_NAME: &str = "policy";
 const CPU_SCALING_GOVERNOR_SUFFIX: &str = "scaling_governor";
 const CPU_SCALING_AVAILABLE_GOVERNORS_SUFFIX: &str = "scaling_available_governors";
 
+const LAVD_PATH: &str = "/usr/bin/scx_lavd";
+
 const PLATFORM_PROFILE_PREFIX: &str = "/sys/class/platform-profile";
 
 const TDP_LIMIT1: &str = "power1_cap";
@@ -324,14 +326,8 @@ impl<'dbus> CpuSchedulerManager<'dbus> {
         Ok(CpuSchedulerManager { scx_unit, current })
     }
 
-    #[cfg(test)]
     pub async fn is_supported() -> Result<bool> {
-        Ok(true)
-    }
-
-    #[cfg(not(test))]
-    pub async fn is_supported() -> Result<bool> {
-        if try_exists(path("/usr/bin/scx_lavd")).await? {
+        if try_exists(path(LAVD_PATH)).await? {
             return Ok(true);
         }
         Ok(false)
@@ -1045,6 +1041,27 @@ pub(crate) mod test {
     use tokio::time::sleep;
     use zbus::{fdo, interface};
 
+    #[derive(Debug, Default, Clone)]
+    pub struct Nodes {
+        cpu_boost: bool,
+        cpu_scheduler: bool,
+        tdp_limit: bool,
+    }
+
+    impl Nodes {
+        pub fn all() -> Nodes {
+            Nodes {
+                cpu_boost: true,
+                cpu_scheduler: true,
+                tdp_limit: true,
+            }
+        }
+
+        pub fn none() -> Nodes {
+            Nodes::default()
+        }
+    }
+
     async fn setup() -> Result<()> {
         // Use hwmon5 just as a test. We needed a subfolder of HWMON_PREFIX
         // and this is as good as any.
@@ -1057,17 +1074,27 @@ pub(crate) mod test {
         Ok(())
     }
 
-    pub async fn create_nodes() -> Result<()> {
+    pub async fn create_nodes(which: &Nodes) -> Result<()> {
         setup().await?;
-        let base = path(CPU_PREFIX);
-        let cpufreq_base = base.join(CPUFREQ_PREFIX);
-        create_dir_all(&cpufreq_base).await?;
-        write(cpufreq_base.join(CPUFREQ_BOOST_SUFFIX), b"1\n").await?;
+        if which.cpu_boost {
+            let base = path(CPU_PREFIX);
+            let cpufreq_base = base.join(CPUFREQ_PREFIX);
+            create_dir_all(&cpufreq_base).await?;
+            write(cpufreq_base.join(CPUFREQ_BOOST_SUFFIX), b"1\n").await?;
+        }
+
+        if which.cpu_scheduler {
+            let lavd_path = path(LAVD_PATH);
+            create_dir_all(lavd_path.parent().unwrap()).await?;
+            write(lavd_path, b"").await?;
+        }
 
         let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
 
-        let filename = base.join(TDP_LIMIT1);
-        write(filename.as_path(), "15000000\n").await?;
+        if which.tdp_limit {
+            let filename = base.join(TDP_LIMIT1);
+            write(filename.as_path(), "15000000\n").await?;
+        }
 
         let base = path(HWMON_PREFIX).join("hwmon6");
         create_dir_all(&base).await?;

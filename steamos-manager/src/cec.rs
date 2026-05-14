@@ -114,7 +114,7 @@ impl<'dbus> HdmiCecControl<'dbus> {
         let proxy = Config1Proxy::new(connection).await?;
         // Sanity check to make sure the daemon is active
         tokio::select! {
-            _ = proxy.wake_tv() => (),
+            res = proxy.wake_tv() => { res?; },
             () = sleep(Duration::from_millis(100)) => bail!("cecd not running"),
         }
         Ok(HdmiCecControl {

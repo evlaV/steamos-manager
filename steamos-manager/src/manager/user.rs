@@ -1798,6 +1798,7 @@ mod test {
     use crate::platform::{
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
     };
+    use crate::power::test::Nodes as PowerNodes;
     use crate::power::{BatteryChargeLimitMethod, TdpLimitingMethod, TdpManagerService};
     use crate::proxy::{LowPowerMode1Proxy, RemoteInterface1Proxy};
     use crate::session::{SessionManagerState, make_managed};
@@ -1827,20 +1828,27 @@ mod test {
 
     #[async_trait]
     trait TestSetup {
-        async fn setup(&mut self, _: &testing::TestHandle, _: &Connection) -> Result<()> {
-            Ok(())
-        }
+        async fn setup(
+            &mut self,
+            handle: &testing::TestHandle,
+            connection: &Connection,
+        ) -> Result<()>;
     }
 
     #[derive(Default)]
     struct NopTestSetup;
 
     #[async_trait]
-    impl TestSetup for NopTestSetup {}
+    impl TestSetup for NopTestSetup {
+        async fn setup(&mut self, _: &testing::TestHandle, _: &Connection) -> Result<()> {
+            Ok(())
+        }
+    }
 
     struct TestConfig<S: TestSetup = NopTestSetup> {
         platform: Option<PlatformConfig>,
         device: Option<DeviceConfig>,
+        power_nodes: PowerNodes,
         setup: S,
     }
 
@@ -1849,6 +1857,7 @@ mod test {
             TestConfig {
                 platform: all_platform_config(),
                 device: all_device_config(),
+                power_nodes: PowerNodes::all(),
                 setup: NopTestSetup,
             }
         }
@@ -1857,6 +1866,7 @@ mod test {
             TestConfig {
                 platform: None,
                 device: None,
+                power_nodes: PowerNodes::none(),
                 setup: NopTestSetup,
             }
         }
@@ -1867,6 +1877,7 @@ mod test {
             TestConfig {
                 platform: None,
                 device: None,
+                power_nodes: PowerNodes::none(),
                 setup,
             }
         }
@@ -1933,13 +1944,57 @@ mod test {
     }
 
     #[derive(Debug)]
-    struct MockCecd {}
+    struct MockCecdConfig1 {}
 
     #[interface(name = "com.steampowered.CecDaemon1.Config1")]
-    impl MockCecd {
+    impl MockCecdConfig1 {
         #[zbus(property)]
         fn wake_tv(&self) -> bool {
             true
+        }
+    }
+
+    struct CecdSetup;
+
+    #[async_trait]
+    impl TestSetup for CecdSetup {
+        async fn setup(&mut self, _: &testing::TestHandle, connection: &Connection) -> Result<()> {
+            connection
+                .request_name("com.steampowered.CecDaemon1")
+                .await?;
+            connection
+                .object_server()
+                .at("/com/steampowered/CecDaemon1/Daemon", MockCecdConfig1 {})
+                .await?;
+            Ok(())
+        }
+    }
+
+    struct OrcaSetup;
+
+    #[async_trait]
+    impl TestSetup for OrcaSetup {
+        async fn setup(&mut self, _: &testing::TestHandle, connection: &Connection) -> Result<()> {
+            let object_server = connection.object_server();
+            let orca_manager = OrcaManager::new(connection).await?;
+            let screen_reader = Arc::new(Mutex::new(orca_manager));
+
+            let screen_reader0 = ScreenReader0::new(screen_reader.clone()).await?;
+            let screen_reader1 = ScreenReader1::new(screen_reader.clone()).await?;
+
+            object_server.at(MANAGER_PATH, screen_reader0).await?;
+            object_server.at(MANAGER_PATH, screen_reader1).await?;
+
+            Ok(())
+        }
+    }
+
+    struct ManagedSetup;
+
+    #[async_trait]
+    impl TestSetup for ManagedSetup {
+        async fn setup(&mut self, _: &testing::TestHandle, _: &Connection) -> Result<()> {
+            make_managed().await
         }
     }
 
@@ -1965,29 +2020,29 @@ mod test {
             config.set_test_paths();
         }
 
-        fake_model(SteamDeckVariant::Galileo).await?;
         if let Some(config) = config.platform {
             handle.test.set_platform_config(config).await;
         } else {
             handle.test.clear_platform_config().await;
         }
         if let Some(config) = config.device {
+            if config
+                .device
+                .iter()
+                .any(|config| config.variant == "Galileo")
+            {
+                fake_model(SteamDeckVariant::Galileo).await?;
+            }
             handle.test.set_device_config(config).await;
         } else {
             handle.test.clear_device_config().await;
         }
         let connection = handle.new_dbus().await?;
         connection.request_name("org.freedesktop.systemd1").await?;
-        connection
-            .request_name("com.steampowered.CecDaemon1")
-            .await?;
         {
             let object_server = connection.object_server();
             object_server
                 .at("/org/freedesktop/systemd1", MockManager::default())
-                .await?;
-            object_server
-                .at("/com/steampowered/CecDaemon1/Config1", MockCecd {})
                 .await?;
         }
         sleep(Duration::from_millis(10)).await;
@@ -1996,18 +2051,14 @@ mod test {
         write(&exe_path, "").await?;
         set_permissions(&exe_path, PermissionsExt::from_mode(0o700)).await?;
 
-        create_dir_all(path("/usr/bin")).await?;
-        write(path("/usr/bin/orca"), "").await?;
         create_dir_all(path("/usr/share/steamos-manager/remotes.d")).await?;
-
-        make_managed().await?;
 
         handle
             .test
             .set_process_cb(|_, _| Ok((0, String::from("Interface wlan0"))))
             .await;
         crate::gpu::test::create_nodes().await?;
-        crate::power::test::create_nodes().await?;
+        crate::power::test::create_nodes(&config.power_nodes).await?;
 
         config.setup.setup(&handle, &connection).await?;
 
@@ -2083,6 +2134,13 @@ mod test {
     }
 
     #[tokio::test]
+    async fn interface_missing_battery_charge_limit() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<BatteryChargeLimit1>(&test.connection).await);
+    }
+
+    #[tokio::test]
     async fn interface_matches_cpu_boost1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2094,6 +2152,13 @@ mod test {
     }
 
     #[tokio::test]
+    async fn interface_missing_cpu_boost1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<CpuBoost1>(&test.connection).await);
+    }
+
+    #[tokio::test]
     async fn interface_matches_cpu_scaling1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2102,6 +2167,24 @@ mod test {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn interface_matches_cpu_scheduler1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<CpuScheduler1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_cpu_scheduler1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<CpuScheduler1>(&test.connection).await);
     }
 
     #[tokio::test]
@@ -2131,8 +2214,7 @@ mod test {
         };
         let test = start(TestConfig {
             platform: Some(config),
-            device: None,
-            setup: NopTestSetup,
+            ..TestConfig::none()
         })
         .await
         .expect("start");
@@ -2149,8 +2231,7 @@ mod test {
         };
         let test = start(TestConfig {
             platform: Some(config),
-            device: None,
-            setup: NopTestSetup,
+            ..TestConfig::none()
         })
         .await
         .expect("start");
@@ -2208,6 +2289,13 @@ mod test {
     }
 
     #[tokio::test]
+    async fn interface_missing_gpu_performance_level1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<GpuPerformanceLevel1>(&test.connection).await);
+    }
+
+    #[tokio::test]
     async fn interface_matches_gpu_power_profile1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2216,6 +2304,206 @@ mod test {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_gpu_power_profile1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<GpuPowerProfile1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_hdmi_cec1() {
+        let test = start(TestConfig::only_setup(CecdSetup {}))
+            .await
+            .expect("start");
+
+        assert!(
+            test_interface_matches::<HdmiCec1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_hdmi_cec1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<HdmiCec1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_low_power_mode1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<LowPowerMode1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_low_power_mode1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<LowPowerMode1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_manager2() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<Manager2>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_matches_performance_profile1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<PerformanceProfile1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_performance_profile1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<PerformanceProfile1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_remote_interface1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<RemoteInterface1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_matches_screen_reader0() {
+        let test = start(TestConfig::only_setup(OrcaSetup {}))
+            .await
+            .expect("start");
+
+        assert!(
+            test_interface_matches::<ScreenReader0>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_screen_reader0() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<ScreenReader0>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_screen_reader1() {
+        let test = start(TestConfig::only_setup(OrcaSetup {}))
+            .await
+            .expect("start");
+
+        assert!(
+            test_interface_matches::<ScreenReader1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_screen_reader1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<ScreenReader1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_session_management1() {
+        let test = start(TestConfig::only_setup(ManagedSetup {}))
+            .await
+            .expect("start");
+
+        assert!(
+            test_interface_matches::<SessionManagement1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_session_management1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<SessionManagement1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_storage1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<Storage1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_storage1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<Storage1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_missing_invalid_trim_storage1() {
+        let mut config = all_platform_config().unwrap();
+        config.storage.as_mut().unwrap().trim_devices = ScriptConfig {
+            script: PathBuf::from("oxo"),
+            script_args: Vec::new(),
+        };
+        let test = start(TestConfig {
+            platform: Some(config),
+            device: all_device_config(),
+            ..TestConfig::none()
+        })
+        .await
+        .expect("start");
+
+        assert!(test_interface_missing::<Storage1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_missing_invalid_format_storage1() {
+        let mut config = all_platform_config().unwrap();
+        let format_config = FormatDeviceConfig {
+            script: PathBuf::from("oxo"),
+            ..FormatDeviceConfig::default()
+        };
+        config.storage.as_mut().unwrap().format_device = format_config;
+        let test = start(TestConfig {
+            platform: Some(config),
+            device: all_device_config(),
+            ..TestConfig::none()
+        })
+        .await
+        .expect("start");
+
+        assert!(test_interface_missing::<Storage1>(&test.connection).await);
     }
 
     #[tokio::test]
@@ -2260,141 +2548,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_matches_hdmi_cec1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<HdmiCec1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_matches_low_power_mode1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<LowPowerMode1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_low_power_mode1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<LowPowerMode1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_manager2() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<Manager2>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_matches_session_management1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<SessionManagement1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_matches_performance_profile1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<PerformanceProfile1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_performance_profile1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<PerformanceProfile1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_matches_remote_interface1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<RemoteInterface1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_matches_storage1() {
-        let test = start(TestConfig::all()).await.expect("start");
-
-        assert!(
-            test_interface_matches::<Storage1>(&test.connection)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn interface_missing_storage1() {
-        let test = start(TestConfig::none()).await.expect("start");
-
-        assert!(test_interface_missing::<Storage1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_missing_invalid_trim_storage1() {
-        let mut config = all_platform_config().unwrap();
-        config.storage.as_mut().unwrap().trim_devices = ScriptConfig {
-            script: PathBuf::from("oxo"),
-            script_args: Vec::new(),
-        };
-        let test = start(TestConfig {
-            platform: Some(config),
-            device: all_device_config(),
-            setup: NopTestSetup,
-        })
-        .await
-        .expect("start");
-
-        assert!(test_interface_missing::<Storage1>(&test.connection).await);
-    }
-
-    #[tokio::test]
-    async fn interface_missing_invalid_format_storage1() {
-        let mut config = all_platform_config().unwrap();
-        let format_config = FormatDeviceConfig {
-            script: PathBuf::from("oxo"),
-            ..FormatDeviceConfig::default()
-        };
-        config.storage.as_mut().unwrap().format_device = format_config;
-        let test = start(TestConfig {
-            platform: Some(config),
-            device: all_device_config(),
-            setup: NopTestSetup,
-        })
-        .await
-        .expect("start");
-
-        assert!(test_interface_missing::<Storage1>(&test.connection).await);
-    }
-
-    #[tokio::test]
     async fn interface_matches_update_bios1() {
         let test = start(TestConfig::all()).await.expect("start");
 
@@ -2422,7 +2575,7 @@ mod test {
         let test = start(TestConfig {
             platform: Some(config),
             device: all_device_config(),
-            setup: NopTestSetup,
+            ..TestConfig::none()
         })
         .await
         .expect("start");
@@ -2458,7 +2611,7 @@ mod test {
         let test = start(TestConfig {
             platform: Some(config),
             device: all_device_config(),
-            setup: NopTestSetup,
+            ..TestConfig::none()
         })
         .await
         .expect("start");
@@ -2467,18 +2620,18 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_matches_wifi_power_management1() {
+    async fn interface_matches_wifi_backend1() {
         let test = start(TestConfig::all()).await.expect("start");
 
         assert!(
-            test_interface_matches::<WifiPowerManagement1>(&test.connection)
+            test_interface_matches::<WifiBackend1>(&test.connection)
                 .await
                 .unwrap()
         );
     }
 
     #[tokio::test]
-    async fn interface_matches_wifi_debug() {
+    async fn interface_matches_wifi_debug1() {
         let test = start(TestConfig::all()).await.expect("start");
 
         assert!(
@@ -2489,11 +2642,36 @@ mod test {
     }
 
     #[tokio::test]
-    async fn interface_matches_wifi_debug_dump() {
+    async fn interface_missing_wifi_debug1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<WifiDebug1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_wifi_debug_dump1() {
         let test = start(TestConfig::all()).await.expect("start");
 
         assert!(
             test_interface_matches::<WifiDebugDump1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_wifi_debug_dump1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<WifiDebugDump1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_wifi_power_management1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<WifiPowerManagement1>(&test.connection)
                 .await
                 .unwrap()
         );
@@ -3140,9 +3318,8 @@ mod test {
             ..DeviceConfig::default()
         };
         let mut test = start(TestConfig {
-            platform: None,
             device: Some(device),
-            setup: NopTestSetup,
+            ..TestConfig::none()
         })
         .await
         .unwrap();
