@@ -41,6 +41,8 @@ mod uinput;
 pub mod cec;
 pub mod daemon;
 pub mod gpu;
+// FIXME: remove once aarch64 has parity with x86_64
+#[allow(unused_imports)]
 pub mod hardware;
 pub mod power;
 pub mod screenreader;
