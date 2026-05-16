@@ -23,8 +23,10 @@ friendly_name = "MSI Claw"
 driver = "intel"
 
 [performance_profile]
-platform_profile_name = "msi-wmi-platform"
 suggested_default = "balanced"
+
+[performance_profile.driver.acpi]
+name = "msi-wmi-platform"
 
 [tdp_limit]
 method = "firmware_attribute"

@@ -34,9 +34,9 @@ use crate::hardware::{
 use crate::job::JobManager;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
-    CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, TdpLimitManager,
-    set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
-    tdp_limit_manager,
+    CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, PlatformProfileDriver,
+    TdpLimitManager, platform_profile_driver, set_cpu_boost_state, set_cpu_scaling_governor,
+    set_max_charge_level, tdp_limit_manager,
 };
 use crate::process::{run_script, script_exit_code, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
@@ -64,6 +64,7 @@ pub struct SteamOSManager {
     wifi_debug_mode: WifiDebugMode,
     fan_control: FanControl,
     tdp_limit_manager: Option<Box<dyn TdpLimitManager>>,
+    platform_profile: Option<Box<dyn PlatformProfileDriver>>,
     gpu_performance_level: Option<Box<dyn GpuPerformanceLevelDriver>>,
     gpu_power_profile: Option<Box<dyn GpuPowerProfileDriver>>,
     // Whether we should use trace-cmd or not.
@@ -82,6 +83,10 @@ impl SteamOSManager {
             tdp_limit_manager: tdp_limit_manager(&connection)
                 .await
                 .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
+                .ok(),
+            platform_profile: platform_profile_driver()
+                .await
+                .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
                 .ok(),
             gpu_performance_level: gpu_performance_level_driver()
                 .await
@@ -715,15 +720,14 @@ impl SteamOSManager {
         Ok(())
     }
 
-    async fn set_performance_profile(&self, profile: &str) -> fdo::Result<()> {
-        let config = device_config().await.map_err(to_zbus_fdo_error)?;
-        let config = config
-            .as_ref()
-            .and_then(|config| config.performance_profile.as_ref())
-            .ok_or(fdo::Error::Failed(String::from(
-                "No performance platform-profile configured",
-            )))?;
-        set_platform_profile(&config.platform_profile_name, profile)
+    async fn set_performance_profile(&mut self, profile: &str) -> fdo::Result<()> {
+        let Some(driver) = self.platform_profile.as_mut() else {
+            return Err(fdo::Error::Failed(String::from(
+                "Platform profile settings not configured",
+            )));
+        };
+        driver
+            .set_platform_profile(profile)
             .await
             .map_err(to_zbus_fdo_error)
     }
