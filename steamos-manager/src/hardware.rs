@@ -25,8 +25,8 @@ use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, TdpLimitingMethod,
-    find_hwmon,
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, PlatformProfileDriverType,
+    TdpLimitingMethod, find_hwmon,
 };
 use crate::process::{run_script, script_exit_code};
 use crate::systemd::{JobMode, SystemdUnit};
@@ -177,6 +177,8 @@ pub(crate) struct InputPlumberConfig {
 pub(crate) struct PerformanceProfileConfig {
     pub suggested_default: String,
     pub platform_profile_name: String,
+    #[serde(default)]
+    pub platform_profile_driver: PlatformProfileDriverType,
 }
 
 #[derive(Clone, Deserialize, Debug)]
