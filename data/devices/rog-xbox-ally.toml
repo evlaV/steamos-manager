@@ -20,8 +20,10 @@ driver = "amdgpu"
 driver = "amdgpu"
 
 [performance_profile]
-platform_profile_name = "asus-wmi"
 suggested_default = "performance"
+
+[performance_profile.driver.acpi]
+name = "asus-wmi"
 
 [battery_charge_limit]
 method = "acpi_sb"

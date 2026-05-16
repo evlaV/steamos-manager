@@ -191,7 +191,13 @@ pub(crate) struct InputPlumberConfig {
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct PerformanceProfileConfig {
     pub suggested_default: String,
-    pub platform_profile_name: String,
+    pub driver: PlatformProfileDriverConfig,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PlatformProfileDriverConfig {
+    Acpi { name: String },
 }
 
 #[derive(Clone, Deserialize, Debug)]

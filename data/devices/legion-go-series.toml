@@ -28,8 +28,10 @@ driver = "amdgpu"
 driver = "amdgpu"
 
 [performance_profile]
-platform_profile_name = "lenovo-wmi-gamezone"
 suggested_default = "custom"
+
+[performance_profile.driver.acpi]
+name = "lenovo-wmi-gamezone"
 
 [tdp_limit]
 method = "firmware_attribute"

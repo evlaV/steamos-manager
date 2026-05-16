@@ -50,9 +50,8 @@ use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
     BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, TdpManagerCommand,
-    get_available_cpu_scaling_governors, get_available_platform_profiles, get_cpu_boost_state,
-    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, register_tdp_limit1,
-    unregister_tdp_limit1,
+    get_available_cpu_scaling_governors, get_cpu_boost_state, get_cpu_scaling_governor,
+    get_max_charge_level, platform_profile_driver, register_tdp_limit1, unregister_tdp_limit1,
 };
 use crate::proxy::{
     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
@@ -845,28 +844,18 @@ impl Manager2 {
 impl PerformanceProfile1 {
     #[zbus(property(emits_changed_signal = "const"))]
     async fn available_performance_profiles(&self) -> fdo::Result<Vec<String>> {
-        let config = device_config().await.map_err(to_zbus_fdo_error)?;
-        let config = config
-            .as_ref()
-            .and_then(|config| config.performance_profile.as_ref())
-            .ok_or(fdo::Error::Failed(String::from(
-                "No performance platform-profile configured",
-            )))?;
-        get_available_platform_profiles(&config.platform_profile_name)
+        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
+        driver
+            .get_available_platform_profiles()
             .await
             .map_err(to_zbus_fdo_error)
     }
 
     #[zbus(property)]
     async fn performance_profile(&self) -> fdo::Result<String> {
-        let config = device_config().await.map_err(to_zbus_fdo_error)?;
-        let config = config
-            .as_ref()
-            .and_then(|config| config.performance_profile.as_ref())
-            .ok_or(fdo::Error::Failed(String::from(
-                "No performance platform-profile configured",
-            )))?;
-        get_platform_profile(&config.platform_profile_name)
+        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
+        driver
+            .get_platform_profile()
             .await
             .map_err(to_zbus_fdo_error)
     }
@@ -1835,8 +1824,9 @@ async fn create_device_interfaces(
         });
     }
 
-    if let Some(config) = config.performance_profile.as_ref()
-        && !get_available_platform_profiles(&config.platform_profile_name)
+    if let Ok(driver) = platform_profile_driver().await
+        && !driver
+            .get_available_platform_profiles()
             .await
             .unwrap_or_default()
             .is_empty()
@@ -2094,7 +2084,8 @@ mod test {
     use crate::hardware::{
         BatteryChargeLimitConfig, DeviceConfig, DeviceMatch, DmiMatch, FanSpeedConfig,
         GpuPerformanceConfig, GpuPerformanceDriverConfig, GpuPowerProfileConfig,
-        PerformanceProfileConfig, RangeConfig, SteamDeckVariant, TdpLimitConfig,
+        PerformanceProfileConfig, PlatformProfileDriverConfig, RangeConfig, SteamDeckVariant,
+        TdpLimitConfig,
     };
     use crate::platform::{
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
@@ -2244,7 +2235,9 @@ mod test {
                 },
             }),
             performance_profile: Some(PerformanceProfileConfig {
-                platform_profile_name: String::from("power-driver"),
+                driver: PlatformProfileDriverConfig::Acpi {
+                    name: String::from("power-driver"),
+                },
                 suggested_default: String::from("balanced"),
             }),
             inputplumber: None,
