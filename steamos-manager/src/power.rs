@@ -31,7 +31,7 @@ use zbus::{Connection, ObjectServer, fdo};
 
 use crate::error::{to_zbus_error, to_zbus_fdo_error};
 use crate::gpu::AMDGPU_HWMON_NAME;
-use crate::hardware::{FanControlState, device_config};
+use crate::hardware::{CpufreqRange, CustomPerformanceProfile, FanControlState, device_config};
 use crate::manager::MANAGER_PATH;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::TdpLimit1;
@@ -56,6 +56,9 @@ const CPU_POLICY_NAME: &str = "policy";
 
 const CPU_SCALING_GOVERNOR_SUFFIX: &str = "scaling_governor";
 const CPU_SCALING_AVAILABLE_GOVERNORS_SUFFIX: &str = "scaling_available_governors";
+
+const CPU_SCALING_MAX_FREQ_SUFFIX: &str = "scaling_max_freq";
+const CPU_SCALING_MIN_FREQ_SUFFIX: &str = "scaling_min_freq";
 
 const LAVD_PATH: &str = "/usr/bin/scx_lavd";
 
@@ -130,11 +133,27 @@ pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileD
         .and_then(|device_config| device_config.performance_profile.as_ref())
         .ok_or(anyhow!("No platform profile driver configured"))?;
 
-    Ok(match &config.platform_profile_driver {
+    match &config.platform_profile_driver {
         PlatformProfileDriverType::Acpi => {
-            Box::new(AcpiPlatformProfileDriver::new(&config.platform_profile_name).await?)
+            if let Some(ref platform_profile_name) = config.platform_profile_name {
+                Ok(Box::new(
+                    AcpiPlatformProfileDriver::new(platform_profile_name).await?,
+                ))
+            } else {
+                Err(anyhow!("No platform profile name configured"))
+            }
         }
-    })
+        PlatformProfileDriverType::Custom => {
+            if let Some(ref profile) = config.custom_profile {
+                Ok(Box::new(
+                    CustomPlatformProfileDriver::new(profile, Some(&config.suggested_default))
+                        .await?,
+                ))
+            } else {
+                Err(anyhow!("No custom profiles configured"))
+            }
+        }
+    }
 }
 
 #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
@@ -256,6 +275,32 @@ async fn read_cpu_sysfs_contents<S: AsRef<Path>>(suffix: S) -> Result<String> {
     fs::read_to_string(base.join(suffix.as_ref()))
         .await
         .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))
+}
+
+async fn write_cpu_freq_sysfs_contents(range: &CpufreqRange) -> Result<()> {
+    let base = path(CPU_PREFIX)
+        .join(CPUFREQ_PREFIX)
+        .join(format!("policy{}", range.policy));
+
+    if let Some(max) = range.max {
+        write_synced(
+            base.join(CPU_SCALING_MAX_FREQ_SUFFIX),
+            max.to_string().as_bytes(),
+        )
+        .await
+        .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
+    }
+
+    if let Some(min) = range.min {
+        write_synced(
+            base.join(CPU_SCALING_MIN_FREQ_SUFFIX),
+            min.to_string().as_bytes(),
+        )
+        .await
+        .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
+    }
+
+    Ok(())
 }
 
 async fn write_cpu_governor_sysfs_contents(contents: String) -> Result<()> {
@@ -735,11 +780,18 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
 pub(crate) enum PlatformProfileDriverType {
     #[default] // historical default
     Acpi,
+    Custom,
 }
 
 #[derive(Debug)]
 pub(crate) struct AcpiPlatformProfileDriver {
     path: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct CustomPlatformProfileDriver {
+    profiles: Vec<CustomPerformanceProfile>,
+    current_profile: Option<String>,
 }
 
 #[async_trait]
@@ -749,7 +801,7 @@ pub(crate) trait PlatformProfileDriver: Send + Sync {
     // This can be used from the user and root managers
     async fn get_platform_profile(&self) -> Result<String>;
     // This can only be used from the root manager
-    async fn set_platform_profile(&self, profile: &str) -> Result<()>;
+    async fn set_platform_profile(&mut self, profile: &str) -> Result<()>;
 }
 
 impl AcpiPlatformProfileDriver {
@@ -779,10 +831,46 @@ impl PlatformProfileDriver for AcpiPlatformProfileDriver {
             .to_string())
     }
 
-    async fn set_platform_profile(&self, profile: &str) -> Result<()> {
+    async fn set_platform_profile(&mut self, profile: &str) -> Result<()> {
         fs::write(self.path.join("profile"), profile.as_bytes())
             .await
             .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
+    }
+}
+
+impl CustomPlatformProfileDriver {
+    async fn new(profiles: &[CustomPerformanceProfile], current: Option<&String>) -> Result<Self> {
+        Ok(Self {
+            profiles: profiles.to_owned(),
+            current_profile: current.cloned(),
+        })
+    }
+}
+
+#[async_trait]
+impl PlatformProfileDriver for CustomPlatformProfileDriver {
+    async fn get_available_platform_profiles(&self) -> Result<Vec<String>> {
+        Ok(self.profiles.iter().map(|p| p.name.clone()).collect())
+    }
+
+    async fn get_platform_profile(&self) -> Result<String> {
+        if let Some(name) = &self.current_profile {
+            Ok(name.clone())
+        } else {
+            Err(anyhow!("No profile is currently set"))
+        }
+    }
+
+    async fn set_platform_profile(&mut self, profile: &str) -> Result<()> {
+        if let Some(profile) = self.profiles.iter().find(|p| p.name == profile) {
+            for cpufreq in &profile.cpufreq {
+                write_cpu_freq_sysfs_contents(cpufreq).await?
+            }
+            self.current_profile = Some(profile.name.clone());
+            Ok(())
+        } else {
+            Err(anyhow!("Unknown custom profile '{profile}'"))
+        }
     }
 }
 
@@ -1941,7 +2029,8 @@ pub(crate) mod test {
         let config = DeviceConfig {
             performance_profile: Some(PerformanceProfileConfig {
                 platform_profile_driver: PlatformProfileDriverType::Acpi,
-                platform_profile_name: String::from("platform-profile0"),
+                platform_profile_name: Some(String::from("platform-profile0")),
+                custom_profile: None,
                 suggested_default: String::from("custom"),
             }),
             tdp_limit: Some(TdpLimitConfig {

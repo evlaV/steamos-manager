@@ -720,8 +720,8 @@ impl SteamOSManager {
         Ok(())
     }
 
-    async fn set_performance_profile(&self, profile: &str) -> fdo::Result<()> {
-        let Some(ref driver) = self.platform_profile else {
+    async fn set_performance_profile(&mut self, profile: &str) -> fdo::Result<()> {
+        let Some(ref mut driver) = self.platform_profile else {
             return Err(fdo::Error::Failed(String::from(
                 "Platform profile settings not configured",
             )));

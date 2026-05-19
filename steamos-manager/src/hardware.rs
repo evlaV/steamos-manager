@@ -176,9 +176,23 @@ pub(crate) struct InputPlumberConfig {
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct PerformanceProfileConfig {
     pub suggested_default: String,
-    pub platform_profile_name: String,
+    pub platform_profile_name: Option<String>,
     #[serde(default)]
     pub platform_profile_driver: PlatformProfileDriverType,
+    pub custom_profile: Option<Vec<CustomPerformanceProfile>>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CustomPerformanceProfile {
+    pub name: String,
+    pub cpufreq: Vec<CpufreqRange>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CpufreqRange {
+    pub policy: u32,
+    pub min: Option<u32>,
+    pub max: Option<u32>,
 }
 
 #[derive(Clone, Deserialize, Debug)]

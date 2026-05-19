@@ -2210,7 +2210,8 @@ mod test {
             }),
             performance_profile: Some(PerformanceProfileConfig {
                 platform_profile_driver: PlatformProfileDriverType::Acpi,
-                platform_profile_name: String::from("power-driver"),
+                platform_profile_name: Some(String::from("power-driver")),
+                custom_profile: None,
                 suggested_default: String::from("balanced"),
             }),
             inputplumber: None,
