@@ -25,8 +25,8 @@ use crate::gpu::GpuPowerProfileDriverType;
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, TdpLimitingMethod,
-    find_hwmon,
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, CpuFreqRange,
+    TdpLimitingMethod, find_hwmon,
 };
 use crate::process::{run_script, script_exit_code};
 use crate::systemd::{JobMode, SystemdUnit};
@@ -126,6 +126,11 @@ pub(crate) struct BatteryChargeLimitConfig {
 }
 
 #[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CustomPerformanceProfile {
+    pub cpufreq: Vec<CpuFreqRange>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
 pub(crate) struct DeviceMatch {
     pub dmi: Option<DmiMatch>,
     pub dt: Option<DeviceTreeMatch>,
@@ -188,6 +193,12 @@ pub(crate) struct InputPlumberConfig {
     pub target_devices: Vec<InputPlumberTargetDevice>,
 }
 
+#[derive(Clone, Deserialize, Debug, Default)]
+pub(crate) struct OptionalRangeConfig<T: Clone> {
+    pub min: Option<T>,
+    pub max: Option<T>,
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct PerformanceProfileConfig {
     pub suggested_default: String,
@@ -197,7 +208,12 @@ pub(crate) struct PerformanceProfileConfig {
 #[derive(Clone, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PlatformProfileDriverConfig {
-    Acpi { name: String },
+    Acpi {
+        name: String,
+    },
+    Custom {
+        profiles: HashMap<String, CustomPerformanceProfile>,
+    },
 }
 
 #[derive(Clone, Deserialize, Debug)]
