@@ -31,7 +31,10 @@ use zbus::{Connection, ObjectServer, fdo};
 
 use crate::error::{to_zbus_error, to_zbus_fdo_error};
 use crate::gpu::AMDGPU_HWMON_NAME;
-use crate::hardware::{FanControlState, PlatformProfileDriverConfig, device_config};
+use crate::hardware::{
+    CustomPerformanceProfile, FanControlState, OptionalRangeConfig, PlatformProfileDriverConfig,
+    device_config,
+};
 use crate::manager::MANAGER_PATH;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::TdpLimit1;
@@ -56,6 +59,9 @@ const CPU_POLICY_NAME: &str = "policy";
 
 const CPU_SCALING_GOVERNOR_SUFFIX: &str = "scaling_governor";
 const CPU_SCALING_AVAILABLE_GOVERNORS_SUFFIX: &str = "scaling_available_governors";
+
+const CPU_SCALING_MAX_FREQ_SUFFIX: &str = "scaling_max_freq";
+const CPU_SCALING_MIN_FREQ_SUFFIX: &str = "scaling_min_freq";
 
 const LAVD_PATH: &str = "/usr/bin/scx_lavd";
 
@@ -134,6 +140,10 @@ pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileD
         PlatformProfileDriverConfig::Acpi { name } => {
             Ok(Box::new(AcpiPlatformProfileDriver::new(name).await?))
         }
+        PlatformProfileDriverConfig::Custom { profiles } => Ok(Box::new(
+            CustomPlatformProfileDriver::new(profiles, Some(config.suggested_default.clone()))
+                .await?,
+        )),
     }
 }
 
@@ -256,6 +266,41 @@ async fn read_cpu_sysfs_contents<S: AsRef<Path>>(suffix: S) -> Result<String> {
     fs::read_to_string(base.join(suffix.as_ref()))
         .await
         .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CpuFreqRange {
+    pub policy: u32,
+    #[serde(flatten)]
+    pub range: OptionalRangeConfig<u32>,
+}
+
+impl CpuFreqRange {
+    async fn write_sysfs_contents(self: &CpuFreqRange) -> Result<()> {
+        let base = path(CPU_PREFIX)
+            .join(CPUFREQ_PREFIX)
+            .join(format!("policy{}", self.policy));
+
+        if let Some(max) = self.range.max {
+            write_synced(
+                base.join(CPU_SCALING_MAX_FREQ_SUFFIX),
+                max.to_string().as_bytes(),
+            )
+            .await
+            .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
+        }
+
+        if let Some(min) = self.range.min {
+            write_synced(
+                base.join(CPU_SCALING_MIN_FREQ_SUFFIX),
+                min.to_string().as_bytes(),
+            )
+            .await
+            .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
+        }
+
+        Ok(())
+    }
 }
 
 async fn write_cpu_governor_sysfs_contents(contents: String) -> Result<()> {
@@ -734,6 +779,12 @@ pub(crate) struct AcpiPlatformProfileDriver {
     path: PathBuf,
 }
 
+#[derive(Debug)]
+pub(crate) struct CustomPlatformProfileDriver {
+    profiles: HashMap<String, CustomPerformanceProfile>,
+    current_profile: Option<String>,
+}
+
 #[async_trait]
 pub(crate) trait PlatformProfileDriver: Send + Sync {
     // This can be used from the user and root managers
@@ -775,6 +826,43 @@ impl PlatformProfileDriver for AcpiPlatformProfileDriver {
         fs::write(self.path.join("profile"), profile.as_bytes())
             .await
             .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
+    }
+}
+
+impl CustomPlatformProfileDriver {
+    async fn new(
+        profiles: &HashMap<String, CustomPerformanceProfile>,
+        current_profile: Option<String>,
+    ) -> Result<Self> {
+        Ok(Self {
+            profiles: profiles.clone(),
+            current_profile,
+        })
+    }
+}
+
+#[async_trait]
+impl PlatformProfileDriver for CustomPlatformProfileDriver {
+    async fn get_available_platform_profiles(&self) -> Result<Vec<String>> {
+        Ok(self.profiles.keys().cloned().collect())
+    }
+
+    async fn get_platform_profile(&self) -> Result<String> {
+        Ok(self
+            .current_profile
+            .clone()
+            .ok_or(anyhow!("No profile is currently set"))?)
+    }
+
+    async fn set_platform_profile(&mut self, profile: &str) -> Result<()> {
+        let Some(profile_info) = self.profiles.get(profile) else {
+            bail!("Unknown custom profile '{profile}'");
+        };
+        for cpufreq in &profile_info.cpufreq {
+            cpufreq.write_sysfs_contents().await?;
+        }
+        self.current_profile = Some(profile.to_string());
+        Ok(())
     }
 }
 
@@ -1600,6 +1688,96 @@ pub(crate) mod test {
                 .await
                 .unwrap(),
             &["a", "b", "c"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cpufreq_write() {
+        let _h = testing::start();
+        let base = path(CPU_PREFIX).join(CPUFREQ_PREFIX);
+
+        create_dir_all(base.join("policy0")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 0,
+            range: OptionalRangeConfig {
+                min: None,
+                max: None,
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert!(
+            read_to_string(base.join(format!("policy0/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+        assert!(
+            read_to_string(base.join(format!("policy0/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+
+        create_dir_all(base.join("policy1")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 1,
+            range: OptionalRangeConfig {
+                min: Some(1),
+                max: None,
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert_eq!(
+            read_to_string(base.join(format!("policy1/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "1"
+        );
+        assert!(
+            read_to_string(base.join(format!("policy1/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+
+        create_dir_all(base.join("policy2")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 2,
+            range: OptionalRangeConfig {
+                min: None,
+                max: Some(2),
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert!(
+            read_to_string(base.join(format!("policy2/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            read_to_string(base.join(format!("policy2/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "2"
+        );
+
+        create_dir_all(base.join("policy3")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 3,
+            range: OptionalRangeConfig {
+                min: Some(3),
+                max: Some(4),
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert_eq!(
+            read_to_string(base.join(format!("policy3/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "3"
+        );
+        assert_eq!(
+            read_to_string(base.join(format!("policy3/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "4"
         );
     }
 

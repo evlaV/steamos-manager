@@ -8,3 +8,30 @@ oui = "e0-31-9e"
 
 [gpu_performance.driver.devfreq]
 sysfs_path = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+
+[performance_profile]
+suggested_default = "Performance"
+
+[performance_profile.driver.custom.profiles.Performance]
+cpufreq = [
+  { policy = 0, max = 2265600 },
+  { policy = 2, max = 3148800 },
+  { policy = 5, max = 2956800 },
+  { policy = 7, max = 3052800 },
+]
+
+[performance_profile.driver.custom.profiles.Balanced]
+cpufreq = [
+  { policy = 0, max = 2265600 },
+  { policy = 2, max = 2515200 },
+  { policy = 5, max = 2515200 },
+  { policy = 7, max = 2553600 },
+]
+
+[performance_profile.driver.custom.profiles.Powersave]
+cpufreq = [
+  { policy = 0, max = 2035200 },
+  { policy = 2, max = 2035200 },
+  { policy = 5, max = 2035200 },
+  { policy = 7, max = 2035200 },
+]
