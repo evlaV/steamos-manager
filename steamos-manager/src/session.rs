@@ -17,8 +17,10 @@ use strum::{Display, EnumString};
 #[cfg(test)]
 use tokio::fs::{create_dir_all, write};
 use tokio::fs::{read_dir, try_exists};
+#[cfg(not(test))]
+use tokio::sync::OnceCell;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{OnceCell, broadcast, oneshot};
+use tokio::sync::{broadcast, oneshot};
 use tokio_stream::StreamExt;
 use tracing::debug;
 use xdg::BaseDirectories;
@@ -39,6 +41,7 @@ const SESSION_CHECK_PATH: &str = "holo.conf";
 const CONFIG_PATH: &str = "zz-holo-autologin.conf";
 const TEMPORARY_CONFIG_PATH: &str = "zzt-holo-temp-login.conf";
 
+#[cfg(not(test))]
 static CONFIG_PATHS: OnceCell<ConfigPaths> = OnceCell::const_new();
 
 struct ConfigPaths {
@@ -87,6 +90,12 @@ impl ConfigPaths {
     }
 }
 
+#[cfg(test)]
+async fn get_config_paths() -> Result<ConfigPaths> {
+    ConfigPaths::resolve().await
+}
+
+#[cfg(not(test))]
 async fn get_config_paths() -> Result<&'static ConfigPaths> {
     CONFIG_PATHS.get_or_try_init(ConfigPaths::resolve).await
 }
@@ -887,5 +896,95 @@ mod test {
         );
 
         task.abort();
+    }
+
+    #[tokio::test]
+    async fn test_holo_naming_selection() {
+        let _handle = testing::start();
+
+        create_dir_all(path(CONFIG_PREFIX_USR)).await.unwrap();
+        create_dir_all(path(CONFIG_PREFIX)).await.unwrap();
+
+        write(path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH), b"")
+            .await
+            .unwrap();
+
+        let paths = get_config_paths().await.unwrap();
+
+        {
+            assert_eq!(
+                paths.config().await.unwrap(),
+                path(CONFIG_PREFIX).join(CONFIG_PATH)
+            );
+            assert_eq!(
+                paths.temp_config().await.unwrap(),
+                path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH)
+            );
+        }
+
+        // If the legacy config files exist some how, we need to use these as they take precedence.
+        write(path(CONFIG_PREFIX).join(CONFIG_PATH_LEGACY), b"")
+            .await
+            .unwrap();
+
+        write(path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH_LEGACY), b"")
+            .await
+            .unwrap();
+
+        {
+            assert_eq!(
+                paths.config().await.unwrap(),
+                path(CONFIG_PREFIX).join(CONFIG_PATH_LEGACY)
+            );
+            assert_eq!(
+                paths.temp_config().await.unwrap(),
+                path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH_LEGACY)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_steamos_naming_selection() {
+        let _handle = testing::start();
+
+        create_dir_all(path(CONFIG_PREFIX_USR)).await.unwrap();
+        create_dir_all(path(CONFIG_PREFIX)).await.unwrap();
+
+        write(path(CONFIG_PREFIX_USR).join(SESSION_CHECK_PATH_LEGACY), b"")
+            .await
+            .unwrap();
+
+        let paths = get_config_paths().await.unwrap();
+
+        {
+            assert_eq!(
+                paths.config().await.unwrap(),
+                path(CONFIG_PREFIX).join(CONFIG_PATH_LEGACY)
+            );
+            assert_eq!(
+                paths.temp_config().await.unwrap(),
+                path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH_LEGACY)
+            );
+        }
+
+        // We still need to use the legacy config files even if the new naming exists, as they take precedence.
+        write(path(CONFIG_PREFIX).join(CONFIG_PATH), b"")
+            .await
+            .unwrap();
+
+        write(path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH), b"")
+            .await
+            .unwrap();
+
+        {
+            assert_eq!(
+                paths.config().await.unwrap(),
+                path(CONFIG_PREFIX).join(CONFIG_PATH_LEGACY)
+            );
+            assert_eq!(
+                paths.temp_config().await.unwrap(),
+                path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH_LEGACY)
+            );
+        }
     }
 }
