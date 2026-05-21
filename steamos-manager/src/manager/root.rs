@@ -509,7 +509,7 @@ impl SteamOSManager {
             debug!("SetGpuPerformanceLevel: discarding out of order serial");
             return Ok(());
         }
-        let Some(ref driver) = self.gpu_performance_level else {
+        let Some(ref mut driver) = self.gpu_performance_level else {
             return Err(fdo::Error::Failed(String::from(
                 "GPU performance settings not configured",
             )));

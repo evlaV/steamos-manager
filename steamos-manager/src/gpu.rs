@@ -137,6 +137,7 @@ pub(crate) struct IntelGpuConfig {
 pub(crate) struct DevfreqGpuPerformanceLevelDriver {
     sysfs_path: PathBuf,
     available_freqs: Vec<u32>,
+    level: DevfreqPerformanceLevel,
 }
 
 #[async_trait]
@@ -152,7 +153,7 @@ pub(crate) trait GpuPerformanceLevelDriver: Send + Sync {
     fn performance_level_from_str(&self, value: &str) -> Result<GpuPerformanceLevel>;
     async fn get_available_performance_levels(&self) -> Result<Vec<GpuPerformanceLevel>>;
     async fn get_performance_level(&self) -> Result<GpuPerformanceLevel>;
-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()>;
+    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()>;
 
     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>>;
     async fn get_clocks(&self) -> Result<u32>;
@@ -347,7 +348,7 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
         ))
     }
 
-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
+    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
         #[allow(irrefutable_let_patterns)] // Remove when more values are added
         let GpuPerformanceLevel::Amdgpu(level) = level else {
             bail!("This is not an amdgpu-compatible performance level");
@@ -560,7 +561,7 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
         Ok(performance_level)
     }
 
-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
+    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
         let GpuPerformanceLevel::Intel(level) = level else {
             bail!("This is not an Intel-compatible performance level");
         };
@@ -636,6 +637,7 @@ impl DevfreqGpuPerformanceLevelDriver {
                 })
                 .sorted()
                 .collect(),
+            level: DevfreqPerformanceLevel::Auto,
         })
     }
 
@@ -672,21 +674,10 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn get_performance_level(&self) -> Result<GpuPerformanceLevel> {
-        let min = fs::read_to_string(self.sysfs_path.join(DEVFREQ_MINIMUM_FREQ))
-            .await
-            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
-        let max = fs::read_to_string(self.sysfs_path.join(DEVFREQ_MAXIMUM_FREQ))
-            .await
-            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
-
-        Ok(GpuPerformanceLevel::Devfreq(if min == max {
-            DevfreqPerformanceLevel::Manual
-        } else {
-            DevfreqPerformanceLevel::Auto
-        }))
+        Ok(GpuPerformanceLevel::Devfreq(self.level))
     }
 
-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
+    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
         let GpuPerformanceLevel::Devfreq(level) = level else {
             bail!("This is not an devfreq-compatible performance level");
         };
@@ -703,6 +694,8 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
                 self.set_clocks(mean / 1_000_000u32).await?;
             }
         }
+
+        self.level = level;
 
         Ok(())
     }
@@ -721,6 +714,10 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn set_clocks(&self, clocks: u32) -> Result<()> {
+        if self.level == DevfreqPerformanceLevel::Auto {
+            return Ok(());
+        }
+
         let cur = self.get_clocks().await?;
         let out = clocks * 1_000_000u32;
 
@@ -924,7 +921,7 @@ CCLK_RANGE in Core0:
     #[tokio::test]
     async fn test_set_gpu_performance_level() {
         let _h = testing::start();
-        let driver = AmdgpuPerformanceLevelDriver {};
+        let mut driver = AmdgpuPerformanceLevelDriver {};
 
         setup_amdgpu().await.expect("setup_amdgpu");
         let base = find_hwmon(AMDGPU_HWMON_NAME).await.unwrap();
@@ -1395,7 +1392,7 @@ CCLK_RANGE in Core0:
 
         setup_intel_i915().await.expect("setup_intel_i915");
 
-        let driver = IntelGpuPerformanceLevelDriver::new()
+        let mut driver = IntelGpuPerformanceLevelDriver::new()
             .await
             .expect("Intel i915 driver creation");
 
@@ -1528,7 +1525,7 @@ CCLK_RANGE in Core0:
 
         setup_intel_xe().await.expect("setup_intel_xe");
 
-        let driver = IntelGpuPerformanceLevelDriver::new()
+        let mut driver = IntelGpuPerformanceLevelDriver::new()
             .await
             .expect("Intel Xe driver creation");
 
@@ -1602,7 +1599,7 @@ CCLK_RANGE in Core0:
 
         setup_intel_i915().await.expect("setup_intel_i915");
 
-        let driver = IntelGpuPerformanceLevelDriver::new()
+        let mut driver = IntelGpuPerformanceLevelDriver::new()
             .await
             .expect("Intel driver creation");
 
