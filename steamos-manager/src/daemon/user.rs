@@ -40,14 +40,16 @@ pub(crate) struct UserConfig {
 #[derive(Copy, Clone, Default, Deserialize, Debug)]
 pub(crate) struct UserServicesConfig {}
 
-#[derive(Clone, Default, Deserialize, Serialize, Debug)]
+#[derive(Clone, Default, Deserialize, Serialize, Debug, PartialEq)]
 #[serde(default)]
 pub(crate) struct UserState {
+    #[serde(skip_serializing_if = "crate::is_default")]
     pub services: UserServicesState,
+    #[serde(skip_serializing_if = "crate::is_default")]
     pub session_manager: SessionManagerState,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize, Debug)]
+#[derive(Clone, Default, Deserialize, Serialize, Debug, PartialEq)]
 pub(crate) struct UserServicesState {}
 
 #[derive(Debug)]

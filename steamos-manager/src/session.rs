@@ -58,9 +58,11 @@ impl From<String> for DesktopSession {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
 pub(crate) struct SessionManagerState {
+    #[serde(skip_serializing_if = "crate::is_default")]
     default_login_mode: LoginMode,
+    #[serde(skip_serializing_if = "crate::is_default")]
     desktop_session: Option<DesktopSession>,
 }
 

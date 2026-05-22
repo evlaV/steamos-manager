@@ -233,6 +233,10 @@ pub(crate) async fn read_config_directory<P: AsRef<Path> + Sync + Send>(
     }))
 }
 
+pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    value == &T::default()
+}
+
 #[cfg(test)]
 mod test {
     use crate::testing;

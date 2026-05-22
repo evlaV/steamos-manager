@@ -41,8 +41,9 @@ pub(crate) struct RootState {
     pub services: RootServicesState,
 }
 
-#[derive(Copy, Clone, Default, Deserialize, Serialize, Debug)]
+#[derive(Copy, Clone, Default, Deserialize, Serialize, Debug, PartialEq)]
 pub(crate) struct RootServicesState {
+    #[serde(skip_serializing_if = "crate::is_default")]
     pub ds_inhibit: DsInhibit,
 }
 
@@ -52,7 +53,7 @@ pub(crate) enum RootCommand {
     GetDsInhibit(oneshot::Sender<bool>),
 }
 
-#[derive(Copy, Clone, Deserialize, Serialize, Debug)]
+#[derive(Copy, Clone, Deserialize, Serialize, Debug, PartialEq)]
 pub(crate) struct DsInhibit {
     pub enabled: bool,
 }

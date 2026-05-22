@@ -32,13 +32,21 @@ pub(in crate::daemon) async fn read_state<C: DaemonContext>(context: &C) -> Resu
 }
 
 pub(in crate::daemon) async fn write_state<C: DaemonContext>(context: &C) -> Result<()> {
+    let state = toml::to_string_pretty(&context.state())?;
     let path = context.state_path()?;
+
+    // Default state will be empty and can be deserialized using the Default impl, so don't write
+    // unless we have some actual data
+    if state.is_empty() {
+        return Ok(());
+    }
+
     create_dir_all(path.parent().ok_or(anyhow!(
         "Context path {} has no parent dir",
         path.to_string_lossy()
     ))?)
     .await?;
-    let state = toml::to_string_pretty(&context.state())?;
+
     Ok(write(path, state.as_bytes()).await?)
 }
 
