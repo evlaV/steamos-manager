@@ -63,14 +63,14 @@ pub(crate) struct SessionManagerState {
     #[serde(skip_serializing_if = "crate::is_default")]
     default_login_mode: LoginMode,
     #[serde(skip_serializing_if = "crate::is_default")]
-    desktop_session: Option<DesktopSession>,
+    default_desktop_session: Option<DesktopSession>,
 }
 
 impl Default for SessionManagerState {
     fn default() -> SessionManagerState {
         SessionManagerState {
             default_login_mode: LoginMode::Game,
-            desktop_session: None,
+            default_desktop_session: None,
         }
     }
 }
@@ -253,7 +253,7 @@ impl SessionManager {
         Ok(self
             .get_state()
             .await?
-            .desktop_session
+            .default_desktop_session
             .unwrap_or_default()
             .0)
     }
@@ -264,7 +264,7 @@ impl SessionManager {
             "Invalid desktop session {session}"
         );
         let mut state = self.get_state().await?;
-        state.desktop_session = Some(session.to_string().into());
+        state.default_desktop_session = Some(session.to_string().into());
         if state.default_login_mode == LoginMode::Desktop {
             self.manager.set_default_session(session).await?;
         }
@@ -523,7 +523,7 @@ mod test {
                 {
                     _ = sender.send(SessionManagerState {
                         default_login_mode: LoginMode::Desktop,
-                        desktop_session: Some(String::from("plasma.desktop").into()),
+                        default_desktop_session: Some(String::from("plasma.desktop").into()),
                     })
                 }
             }
@@ -601,7 +601,14 @@ mod test {
             DesktopSession::default().0
         );
         assert_eq!(manager.default_login_mode().await.unwrap(), LoginMode::Game);
-        assert!(manager.get_state().await.unwrap().desktop_session.is_none());
+        assert!(
+            manager
+                .get_state()
+                .await
+                .unwrap()
+                .default_desktop_session
+                .is_none()
+        );
 
         manager
             .set_default_login_mode(LoginMode::Desktop)
@@ -616,7 +623,14 @@ mod test {
             manager.default_desktop_session().await.unwrap(),
             DesktopSession::default().0
         );
-        assert!(manager.get_state().await.unwrap().desktop_session.is_none());
+        assert!(
+            manager
+                .get_state()
+                .await
+                .unwrap()
+                .default_desktop_session
+                .is_none()
+        );
 
         manager
             .set_default_desktop_session("city17.desktop")
@@ -626,7 +640,14 @@ mod test {
             manager.default_desktop_session().await.unwrap(),
             DesktopSession::default().0
         );
-        assert!(manager.get_state().await.unwrap().desktop_session.is_none());
+        assert!(
+            manager
+                .get_state()
+                .await
+                .unwrap()
+                .default_desktop_session
+                .is_none()
+        );
 
         write(path("/usr/share/xsessions/city17.desktop"), b"")
             .await
@@ -640,7 +661,7 @@ mod test {
             "city17.desktop"
         );
         assert_eq!(
-            manager.get_state().await.unwrap().desktop_session,
+            manager.get_state().await.unwrap().default_desktop_session,
             Some(DesktopSession(String::from("city17.desktop")))
         );
 
