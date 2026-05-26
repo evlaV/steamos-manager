@@ -25,6 +25,9 @@ pub trait SessionManagement1 {
     /// SwitchToDesktopMode method
     fn switch_to_desktop_mode(&self) -> zbus::Result<()>;
 
+    /// SwitchToDesktopSession method
+    fn switch_to_desktop_session(&self, sessions: &str) -> zbus::Result<()>;
+
     /// SwitchToGameMode method
     fn switch_to_game_mode(&self) -> zbus::Result<()>;
 

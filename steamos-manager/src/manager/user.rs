@@ -1261,6 +1261,13 @@ impl SessionManagement1 {
             .map_err(to_zbus_fdo_error)
     }
 
+    async fn switch_to_desktop_session(&self, session: &str) -> fdo::Result<()> {
+        self.manager
+            .switch_to_desktop_session(session)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
     async fn valid_desktop_sessions(&self) -> fdo::Result<Vec<String>> {
         valid_desktop_sessions().await.map_err(to_zbus_fdo_error)
     }

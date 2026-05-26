@@ -323,7 +323,13 @@ enum Commands {
     },
 
     /// Switch from the current session into desktop mode
-    SwitchToDesktopMode,
+    SwitchToDesktopMode {
+        /// If set, switches to the named session. If not set, switches to the
+        /// default desktop session. Valid sessions can be obtained using
+        /// get-valid-desktop-sessions. The default desktop session can be
+        /// obtained using get-default-desktop-session.
+        session: Option<String>,
+    },
 
     /// Switch from the current session into game mode
     SwitchToGameMode,
@@ -792,9 +798,13 @@ async fn main() -> Result<()> {
             let proxy = ScreenReader1Proxy::new(&conn).await?;
             proxy.set_voice(&voice).await?;
         }
-        Commands::SwitchToDesktopMode => {
+        Commands::SwitchToDesktopMode { session } => {
             let proxy = SessionManagement1Proxy::new(&conn).await?;
-            proxy.switch_to_desktop_mode().await?;
+            if let Some(session) = session {
+                proxy.switch_to_desktop_session(session.as_str()).await?;
+            } else {
+                proxy.switch_to_desktop_mode().await?;
+            }
         }
         Commands::SwitchToGameMode => {
             let proxy = SessionManagement1Proxy::new(&conn).await?;

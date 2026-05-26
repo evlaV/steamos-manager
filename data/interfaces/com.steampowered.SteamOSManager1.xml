@@ -656,6 +656,18 @@
     </method>
 
     <!--
+      SwitchToDesktopSession:
+
+      Log out and switch to the specified desktop mode session
+
+      @session: The name of the session to switch to. This must be a valid
+      session name as listed by ValidDesktopSessions.
+    -->
+    <method name="SwitchToDesktopSession">
+      <arg type="s" name="sessions" direction="in"/>
+    </method>
+
+    <!--
       DefaultDesktopSession:
 
       The name of the default desktop session. Valid values are listed by the

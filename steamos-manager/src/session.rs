@@ -228,6 +228,15 @@ impl SessionManager {
         self.logout().await
     }
 
+    pub(crate) async fn switch_to_desktop_session(&self, session: &str) -> Result<()> {
+        ensure!(
+            is_valid_desktop_session(session).await?,
+            "Invalid desktop session {session}"
+        );
+        self.manager.set_temporary_session(session).await?;
+        self.logout().await
+    }
+
     async fn get_state(&self) -> Result<SessionManagerState> {
         let (tx, rx) = oneshot::channel();
         self.channel
@@ -412,7 +421,7 @@ mod test {
     use std::time::Duration;
     use tokio::spawn;
     use tokio::sync::Notify;
-    use tokio::sync::mpsc::channel;
+    use tokio::sync::mpsc::{Receiver, channel};
     use tokio::time::sleep;
     use zbus::interface;
 
@@ -543,11 +552,26 @@ mod test {
         task.abort();
     }
 
+    async fn session_relay(mut rx: Receiver<DaemonCommand>) {
+        let mut state = SessionManagerState::default();
+        while let Some(message) = rx.recv().await {
+            match message {
+                DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) => {
+                    _ = sender.send(state.clone())
+                }
+                DaemonCommand::ContextCommand(UserCommand::SetSessionManagerState(new_state)) => {
+                    state = new_state;
+                }
+                _ => (),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_write_state() {
         let mut handle = testing::start();
         let connection = handle.new_dbus().await.unwrap();
-        let (tx, mut rx) = channel(2);
+        let (tx, rx) = channel(2);
         connection
             .request_name("com.steampowered.SteamOSManager1")
             .await
@@ -560,23 +584,7 @@ mod test {
             .await
             .unwrap();
 
-        let task = spawn(async move {
-            let mut state = SessionManagerState::default();
-            while let Some(message) = rx.recv().await {
-                match message {
-                    DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) => {
-                        _ = sender.send(state.clone())
-                    }
-                    DaemonCommand::ContextCommand(UserCommand::SetSessionManagerState(
-                        new_state,
-                    )) => {
-                        state = new_state;
-                    }
-                    _ => (),
-                }
-            }
-        });
-
+        let task = spawn(session_relay(rx));
         sleep(Duration::from_millis(1)).await;
 
         create_dir_all(path("/usr/share/wayland-sessions"))
@@ -649,7 +657,7 @@ mod test {
     async fn test_temporary_session() {
         let mut handle = testing::start();
         let connection = handle.new_dbus().await.unwrap();
-        let (tx, mut rx) = channel(2);
+        let (tx, rx) = channel(2);
         connection
             .request_name("com.steampowered.SteamOSManager1")
             .await
@@ -691,22 +699,7 @@ mod test {
             .await
             .unwrap();
 
-        let task = spawn(async move {
-            let mut state = SessionManagerState::default();
-            while let Some(message) = rx.recv().await {
-                match message {
-                    DaemonCommand::ContextCommand(UserCommand::GetSessionManagerState(sender)) => {
-                        _ = sender.send(state.clone())
-                    }
-                    DaemonCommand::ContextCommand(UserCommand::SetSessionManagerState(
-                        new_state,
-                    )) => {
-                        state = new_state;
-                    }
-                    _ => (),
-                }
-            }
-        });
+        let task = spawn(session_relay(rx));
 
         create_dir_all(path("/usr/share/wayland-sessions"))
             .await
@@ -755,6 +748,84 @@ mod test {
             assert_eq!(unit.active, "inactive");
             unit.active = String::from("active");
         }
+
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn test_temporary_desktop_session() {
+        let mut handle = testing::start();
+        let connection = handle.new_dbus().await.unwrap();
+        let (tx, rx) = channel(2);
+        connection
+            .request_name("com.steampowered.SteamOSManager1")
+            .await
+            .unwrap();
+        connection
+            .request_name("org.freedesktop.systemd1")
+            .await
+            .unwrap();
+
+        let manager = MockRootManager::default();
+        let notify = manager.notify.clone();
+        let mut unit = MockUnit::default();
+        unit.active = String::from("inactive");
+        unit.unit_file = String::from("disabled");
+
+        let object_server = connection.object_server();
+        object_server
+            .at("/com/steampowered/SteamOSManager1", manager)
+            .await
+            .unwrap();
+        object_server
+            .at("/org/freedesktop/systemd1", MockManager::default())
+            .await
+            .unwrap();
+        object_server
+            .at(
+                "/org/freedesktop/systemd1/unit/graphical_2dsession_2etarget",
+                unit,
+            )
+            .await
+            .unwrap();
+
+        let root_manager = object_server
+            .interface::<_, MockRootManager>("/com/steampowered/SteamOSManager1")
+            .await
+            .unwrap();
+
+        let task = spawn(session_relay(rx));
+
+        create_dir_all(path("/usr/share/wayland-sessions"))
+            .await
+            .unwrap();
+        create_dir_all(path("/usr/share/xsessions")).await.unwrap();
+
+        write(path("/usr/share/wayland-sessions/city17.desktop"), b"")
+            .await
+            .unwrap();
+
+        sleep(Duration::from_millis(1)).await;
+
+        let manager = SessionManager::new(connection.clone(), &connection, tx)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manager.default_desktop_session().await.unwrap(),
+            "plasma.desktop"
+        );
+
+        manager
+            .switch_to_desktop_session("city17.desktop")
+            .await
+            .unwrap();
+        notify.notified().await;
+        assert_eq!(root_manager.get().await.temporary_session, "city17.desktop");
+        assert_eq!(
+            manager.default_desktop_session().await.unwrap(),
+            "plasma.desktop"
+        );
 
         task.abort();
     }
