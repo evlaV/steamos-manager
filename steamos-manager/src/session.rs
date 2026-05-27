@@ -371,15 +371,23 @@ pub(crate) mod root {
     use std::io::ErrorKind;
     use tokio::fs::{remove_file, write};
 
-    use crate::session::get_config_paths;
+    use crate::path;
+    use crate::session::{
+        CONFIG_PREFIX, TEMPORARY_CONFIG_PATH, TEMPORARY_CONFIG_PATH_LEGACY, get_config_paths,
+    };
 
     pub(crate) async fn clean_temporary_sessions() -> Result<()> {
-        let paths = get_config_paths().await?;
+        let paths = [
+            path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH),
+            path(CONFIG_PREFIX).join(TEMPORARY_CONFIG_PATH_LEGACY),
+        ];
 
-        match remove_file(paths.temp_config().await?).await {
-            Ok(()) => (),
-            Err(e) if e.kind() == ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
+        for p in &paths {
+            match remove_file(p).await {
+                Ok(()) => (),
+                Err(e) if e.kind() == ErrorKind::NotFound => (),
+                Err(e) => return Err(e.into()),
+            }
         }
 
         Ok(())
