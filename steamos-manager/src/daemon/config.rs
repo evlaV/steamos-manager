@@ -15,8 +15,8 @@ use tracing::{error, info};
 use crate::daemon::DaemonContext;
 use crate::{AsyncFileSource, read_config_directory};
 
-pub(in crate::daemon) async fn read_state<C: DaemonContext>(context: &C) -> Result<C::State> {
-    let path = context.state_path()?;
+pub(in crate::daemon) async fn read_state<C: DaemonContext>() -> Result<C::State> {
+    let path = C::state_path()?;
     let state = match read_to_string(path).await {
         Ok(state) => state,
         Err(e) => {
@@ -31,21 +31,21 @@ pub(in crate::daemon) async fn read_state<C: DaemonContext>(context: &C) -> Resu
     Ok(toml::from_str(state.as_str())?)
 }
 
-pub(in crate::daemon) async fn write_state<C: DaemonContext>(context: &C) -> Result<()> {
-    let path = context.state_path()?;
+pub(in crate::daemon) async fn write_state<C: DaemonContext>(state: &C::State) -> Result<()> {
+    let path = C::state_path()?;
     create_dir_all(path.parent().ok_or(anyhow!(
         "Context path {} has no parent dir",
         path.to_string_lossy()
     ))?)
     .await?;
-    let state = toml::to_string_pretty(&context.state())?;
+    let state = toml::to_string_pretty(state)?;
     Ok(write(path, state.as_bytes()).await?)
 }
 
-pub(in crate::daemon) async fn read_config<C: DaemonContext>(context: &C) -> Result<C::Config> {
+pub(in crate::daemon) async fn read_config<C: DaemonContext>() -> Result<C::Config> {
     let builder = ConfigBuilder::<AsyncState>::default();
-    let system_config_path = context.system_config_path()?;
-    let user_config_path = context.user_config_path()?;
+    let system_config_path = C::system_config_path()?;
+    let user_config_path = C::user_config_path()?;
 
     let builder = builder.add_async_source(AsyncFileSource::from(
         system_config_path.join("config.toml"),
@@ -106,11 +106,11 @@ mod test {
         type Config = TestState;
         type Command = ();
 
-        fn user_config_path(&self) -> Result<PathBuf> {
+        fn user_config_path() -> Result<PathBuf> {
             Ok(path("user"))
         }
 
-        fn system_config_path(&self) -> Result<PathBuf> {
+        fn system_config_path() -> Result<PathBuf> {
             Ok(path("system"))
         }
 
@@ -147,12 +147,11 @@ mod test {
     async fn test_read_state() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-        let state = read_state(&context).await.expect("read_state");
+        let state = read_state::<TestContext>().await.expect("read_state");
 
         assert_eq!(state, TestState::default());
 
-        let state_path = context.state_path().expect("state_path");
+        let state_path = TestContext::state_path().expect("state_path");
         create_dir_all(state_path.parent().unwrap())
             .await
             .expect("create_dir_all");
@@ -164,7 +163,7 @@ mod test {
         .await
         .expect("write");
 
-        let state = read_state(&context).await.expect("read_state");
+        let state = read_state::<TestContext>().await.expect("read_state");
         assert_eq!(
             state,
             TestState {
@@ -178,8 +177,7 @@ mod test {
     async fn test_read_extra_state() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-        let state_path = context.state_path().expect("state_path");
+        let state_path = TestContext::state_path().expect("state_path");
         create_dir_all(state_path.parent().unwrap())
             .await
             .expect("create_dir_all");
@@ -191,7 +189,7 @@ mod test {
         .await
         .expect("write");
 
-        let state = read_state(&context).await.expect("read_state");
+        let state = read_state::<TestContext>().await.expect("read_state");
         assert_eq!(
             state,
             TestState {
@@ -205,8 +203,7 @@ mod test {
     async fn test_read_missing_state() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-        let state_path = context.state_path().expect("state_path");
+        let state_path = TestContext::state_path().expect("state_path");
         create_dir_all(state_path.parent().unwrap())
             .await
             .expect("create_dir_all");
@@ -215,7 +212,7 @@ mod test {
             .await
             .expect("write");
 
-        let state = read_state(&context).await.expect("read_state");
+        let state = read_state::<TestContext>().await.expect("read_state");
         assert_eq!(
             state,
             TestState {
@@ -229,15 +226,19 @@ mod test {
     async fn test_write_state() {
         let _h = testing::start();
 
-        let mut context = TestContext::default();
-        let state_path = context.state_path().expect("state_path");
+        let mut state = TestState::default();
+        let state_path = TestContext::state_path().expect("state_path");
 
-        write_state(&context).await.expect("write_state");
+        write_state::<TestContext>(&state)
+            .await
+            .expect("write_state");
         let config = read_to_string(&state_path).await.expect("read_to_string");
         assert_eq!(config, "value = 0\n\n[substate]\nsubvalue = 0\n");
 
-        context.state.value = 1;
-        write_state(&context).await.expect("write_state");
+        state.value = 1;
+        write_state::<TestContext>(&state)
+            .await
+            .expect("write_state");
         let config = read_to_string(&state_path).await.expect("read_to_string");
         assert_eq!(config, "value = 1\n\n[substate]\nsubvalue = 0\n");
     }
@@ -246,16 +247,15 @@ mod test {
     async fn test_read_system_config() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(config, TestState::default());
 
-        let system_config_path = context.system_config_path().expect("system_config_path");
+        let system_config_path = TestContext::system_config_path().expect("system_config_path");
         create_dir_all(&system_config_path)
             .await
             .expect("create_dir_all");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(config, TestState::default());
 
         write_synced(
@@ -265,7 +265,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -279,16 +279,15 @@ mod test {
     async fn test_read_user_config() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(config, TestState::default());
 
-        let user_config_path = context.user_config_path().expect("user_config_path");
+        let user_config_path = TestContext::user_config_path().expect("user_config_path");
         create_dir_all(&user_config_path)
             .await
             .expect("create_dir_all");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(config, TestState::default());
 
         write_synced(
@@ -298,7 +297,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -312,14 +311,12 @@ mod test {
     async fn test_config_ordering() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-
-        let system_config_path = context.user_config_path().expect("system_config_path");
+        let system_config_path = TestContext::user_config_path().expect("system_config_path");
         create_dir_all(&system_config_path)
             .await
             .expect("create_dir_all");
 
-        let user_config_path = context.user_config_path().expect("user_config_path");
+        let user_config_path = TestContext::user_config_path().expect("user_config_path");
         create_dir_all(&user_config_path)
             .await
             .expect("create_dir_all");
@@ -338,7 +335,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -352,14 +349,12 @@ mod test {
     async fn test_config_partial_ordering() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-
-        let system_config_path = context.system_config_path().expect("system_config_path");
+        let system_config_path = TestContext::system_config_path().expect("system_config_path");
         create_dir_all(&system_config_path)
             .await
             .expect("create_dir_all");
 
-        let user_config_path = context.user_config_path().expect("user_config_path");
+        let user_config_path = TestContext::user_config_path().expect("user_config_path");
         create_dir_all(&user_config_path)
             .await
             .expect("create_dir_all");
@@ -371,7 +366,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -387,7 +382,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -401,9 +396,7 @@ mod test {
     async fn test_read_user_config_fragments() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-
-        let user_config_path = context.user_config_path().expect("user_config_path");
+        let user_config_path = TestContext::user_config_path().expect("user_config_path");
         create_dir_all(user_config_path.join("config.toml.d"))
             .await
             .expect("create_dir_all");
@@ -415,7 +408,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -431,7 +424,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -445,9 +438,7 @@ mod test {
     async fn test_read_system_config_fragments() {
         let _h = testing::start();
 
-        let context = TestContext::default();
-
-        let system_config_path = context.system_config_path().expect("system_config_path");
+        let system_config_path = TestContext::system_config_path().expect("system_config_path");
         create_dir_all(system_config_path.join("config.toml.d"))
             .await
             .expect("create_dir_all");
@@ -459,7 +450,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {
@@ -475,7 +466,7 @@ mod test {
         .await
         .expect("write");
 
-        let config = read_config(&context).await.expect("read_config");
+        let config = read_config::<TestContext>().await.expect("read_config");
         assert_eq!(
             config,
             TestState {

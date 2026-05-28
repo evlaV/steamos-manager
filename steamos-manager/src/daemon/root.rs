@@ -103,11 +103,11 @@ impl DaemonContext for RootContext {
     type Config = RootConfig;
     type Command = RootCommand;
 
-    fn user_config_path(&self) -> Result<PathBuf> {
+    fn user_config_path() -> Result<PathBuf> {
         Ok(path("/etc/steamos-manager"))
     }
 
-    fn system_config_path(&self) -> Result<PathBuf> {
+    fn system_config_path() -> Result<PathBuf> {
         Ok(path("/usr/share/steamos-manager/system.d"))
     }
 

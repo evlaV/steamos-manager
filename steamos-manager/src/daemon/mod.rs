@@ -35,13 +35,13 @@ pub(crate) trait DaemonContext: Sized {
     type Config: for<'a> Deserialize<'a> + Default + Debug;
     type Command: Send + Debug;
 
-    fn state_path(&self) -> Result<PathBuf> {
-        let config_path = self.user_config_path()?;
+    fn state_path() -> Result<PathBuf> {
+        let config_path = Self::user_config_path()?;
         Ok(config_path.join("state.toml"))
     }
 
-    fn user_config_path(&self) -> Result<PathBuf>;
-    fn system_config_path(&self) -> Result<PathBuf>;
+    fn user_config_path() -> Result<PathBuf>;
+    fn system_config_path() -> Result<PathBuf>;
     fn state(&self) -> &Self::State;
 
     async fn start(
@@ -157,8 +157,8 @@ impl<C: DaemonContext> Daemon<C> {
             "Can't run a daemon with no services attached."
         );
 
-        let state = read_state(&context).await?;
-        let config = read_config(&context).await?;
+        let state = read_state::<C>().await?;
+        let config = read_config::<C>().await?;
         debug!("Starting daemon with state: {state:#?}, config: {config:#?}");
         context.start(state, config, self).await?;
 
@@ -199,7 +199,7 @@ impl<C: DaemonContext> Daemon<C> {
                 e = sighup.recv() => match e {
                     Some(()) => {
                         let _ = self.notify_socket.begin_reload().await;
-                        let res = match read_config(&context).await {
+                        let res = match read_config::<C>().await {
                             Ok(config) =>
                                 context.reload(config, self).await,
                             Err(error) => {
@@ -247,14 +247,14 @@ impl<C: DaemonContext> Daemon<C> {
     ) -> Result<()> {
         match cmd {
             DaemonCommand::ContextCommand(cmd) => context.handle_command(cmd, self).await,
-            DaemonCommand::ReadConfig => match read_config(context).await {
+            DaemonCommand::ReadConfig => match read_config::<C>().await {
                 Ok(config) => context.reload(config, self).await,
                 Err(error) => {
                     error!("Failed to load configuration: {error}");
                     Ok(())
                 }
             },
-            DaemonCommand::WriteState => write_state(context).await,
+            DaemonCommand::WriteState => write_state::<C>(context.state()).await,
         }
     }
 }

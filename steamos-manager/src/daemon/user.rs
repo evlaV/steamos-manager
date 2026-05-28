@@ -68,7 +68,7 @@ impl DaemonContext for UserContext {
     type Command = UserCommand;
 
     #[cfg(not(test))]
-    fn user_config_path(&self) -> Result<PathBuf> {
+    fn user_config_path() -> Result<PathBuf> {
         let xdg_base = BaseDirectories::new();
         xdg_base
             .get_config_file("steamos-manager")
@@ -76,11 +76,11 @@ impl DaemonContext for UserContext {
     }
 
     #[cfg(test)]
-    fn user_config_path(&self) -> Result<PathBuf> {
+    fn user_config_path() -> Result<PathBuf> {
         Ok(path("steamos-manager"))
     }
 
-    fn system_config_path(&self) -> Result<PathBuf> {
+    fn system_config_path() -> Result<PathBuf> {
         Ok(path("/usr/share/steamos-manager/user.d"))
     }
 
