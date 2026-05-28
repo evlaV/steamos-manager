@@ -44,7 +44,7 @@ pub enum LoginMode {
 
 #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
 #[repr(transparent)]
-struct DesktopSession(pub String);
+pub(crate) struct DesktopSession(pub String);
 
 impl Default for DesktopSession {
     fn default() -> DesktopSession {
@@ -61,7 +61,7 @@ impl From<String> for DesktopSession {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub(crate) struct SessionManagerState {
     default_login_mode: LoginMode,
-    desktop_session: Option<DesktopSession>,
+    pub(crate) desktop_session: Option<DesktopSession>,
 }
 
 impl Default for SessionManagerState {

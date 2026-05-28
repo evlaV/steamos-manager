@@ -23,6 +23,7 @@ use xdg::BaseDirectories;
 use zbus::connection::Connection;
 use zbus::fdo::PeerProxy;
 
+use crate::daemon::config::write_state;
 use crate::daemon::{Daemon, DaemonCommand, DaemonContext, channel};
 use crate::job::{JobManager, JobManagerService};
 use crate::manager::user::create_interfaces;
@@ -40,9 +41,11 @@ pub(crate) struct UserConfig {
 #[derive(Copy, Clone, Default, Deserialize, Debug)]
 pub(crate) struct UserServicesConfig {}
 
-#[derive(Clone, Default, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(default)]
 pub(crate) struct UserState {
+    #[serde(default = "Default::default")]
+    pub version: u32,
     pub services: UserServicesState,
     pub session_manager: SessionManagerState,
 }
@@ -95,6 +98,9 @@ impl DaemonContext for UserContext {
         daemon: &mut Daemon<UserContext>,
     ) -> Result<()> {
         self.state = state;
+        if self.state.migrate() {
+            write_state::<Self>(&self.state).await?;
+        }
 
         let udev = UdevMonitor::init(&self.session).await?;
         daemon.add_service(udev);
@@ -126,6 +132,34 @@ impl DaemonContext for UserContext {
             }
         }
         Ok(())
+    }
+}
+
+impl UserState {
+    const STATE_VERSION: u32 = 1;
+
+    fn migrate(&mut self) -> bool {
+        if self.version >= Self::STATE_VERSION {
+            return false;
+        }
+
+        // Version 1: Reset the session_manager.desktop_session to None
+        if self.version < 1 {
+            self.session_manager.desktop_session = None;
+        }
+
+        self.version = Self::STATE_VERSION;
+        true
+    }
+}
+
+impl Default for UserState {
+    fn default() -> UserState {
+        UserState {
+            version: Self::STATE_VERSION,
+            services: UserServicesState::default(),
+            session_manager: SessionManagerState::default(),
+        }
     }
 }
 
@@ -211,4 +245,43 @@ pub async fn daemon() -> Result<()> {
     }
 
     daemon.run(context).await
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use crate::session::DesktopSession;
+
+    #[test]
+    fn test_defaults() {
+        let default = UserState::default();
+        assert_eq!(default.version, 1);
+
+        let empty = toml::from_str::<UserState>("").unwrap();
+        assert_eq!(empty.version, 0);
+    }
+
+    #[test]
+    fn test_migrate_v0() {
+        let mut session_manager = SessionManagerState::default();
+        session_manager.desktop_session =
+            Some(DesktopSession::from(String::from("plasma.desktop")));
+        let mut state = UserState {
+            version: 0,
+            session_manager,
+            ..UserState::default()
+        };
+
+        assert_eq!(state.version, 0);
+        assert_eq!(
+            state.session_manager.desktop_session,
+            Some(DesktopSession::from(String::from("plasma.desktop")))
+        );
+
+        assert!(state.migrate());
+
+        assert_eq!(state.version, 1);
+        assert!(state.session_manager.desktop_session.is_none());
+    }
 }
