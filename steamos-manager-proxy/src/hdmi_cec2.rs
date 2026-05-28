@@ -14,6 +14,8 @@
 use zbus::proxy;
 #[proxy(
     interface = "com.steampowered.SteamOSManager1.HdmiCec2",
+    default_service = "com.steampowered.SteamOSManager1",
+    default_path = "/com/steampowered/SteamOSManager1",
     assume_defaults = true
 )]
 pub trait HdmiCec2 {
