@@ -21,7 +21,7 @@ use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::task::{JoinHandle, spawn};
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use zbus::fdo::{self, DBusProxy};
 use zbus::message::Header;
 use zbus::names::{BusName, OwnedBusName, UniqueName};
@@ -1831,16 +1831,20 @@ pub(crate) async fn create_interfaces(
         order: SerialOrderValidator::default(),
     };
 
-    let hdmi_cec = HdmiCecControl::new(&session).await.ok();
+    let hdmi_cec = HdmiCecControl::new(&session).await;
     let cecd_service;
     let hdmi_cec_config;
-    if let Some(hdmi_cec) = hdmi_cec.as_ref() {
-        cecd_service = CecdService::new(&system, hdmi_cec).await.ok();
-        hdmi_cec_config = Config1Proxy::new(&session).await.ok();
-    } else {
-        cecd_service = None;
-        hdmi_cec_config = None;
-    }
+    match hdmi_cec {
+        Ok(ref hdmi_cec) => {
+            cecd_service = CecdService::new(&system, hdmi_cec).await.ok();
+            hdmi_cec_config = Config1Proxy::new(&session).await.ok();
+        }
+        Err(ref e) => {
+            info!("Could not start CEC service: {e}");
+            cecd_service = None;
+            hdmi_cec_config = None;
+        }
+    };
 
     let manager2 = Manager2 {
         proxy: proxy.clone(),
@@ -1932,7 +1936,7 @@ pub(crate) async fn create_interfaces(
         Err(e) => warn!("Can't add GpuPowerProfile1 interface: {e}"),
     }
 
-    if let Some(hdmi_cec) = hdmi_cec {
+    if let Ok(hdmi_cec) = hdmi_cec {
         let hdmi_cec = Arc::new(Mutex::new(hdmi_cec));
         object_server
             .at(
