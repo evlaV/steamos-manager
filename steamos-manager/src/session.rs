@@ -369,7 +369,7 @@ impl SessionManager {
 pub(crate) mod root {
     use anyhow::{Result, ensure};
     use std::io::ErrorKind;
-    use tokio::fs::{remove_file, write};
+    use tokio::fs::{create_dir_all, remove_file, write};
 
     use crate::path;
     use crate::session::{
@@ -399,6 +399,7 @@ pub(crate) mod root {
             "Session name cannot contain newlines"
         );
         let paths = get_config_paths().await?;
+        create_dir_all(path(CONFIG_PREFIX)).await?;
         Ok(write(
             paths.temp_config().await?,
             format!("[Autologin]\nSession={session}\n").as_bytes(),
@@ -412,6 +413,7 @@ pub(crate) mod root {
             "Session name cannot contain newlines"
         );
         let paths = get_config_paths().await?;
+        create_dir_all(path(CONFIG_PREFIX)).await?;
         Ok(write(
             paths.config().await?,
             format!("[Autologin]\nSession={session}\n").as_bytes(),
