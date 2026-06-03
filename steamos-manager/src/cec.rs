@@ -119,9 +119,11 @@ impl<'dbus> HdmiCecControl<'dbus> {
     pub async fn new(connection: &Connection) -> Result<HdmiCecControl<'dbus>> {
         let proxy = Config1Proxy::new(connection).await?;
         // Sanity check to make sure the daemon is active
+        // Note, this can easily take 250-300 ms, so use a generous timeout in
+        // case the CEC bus is busy.
         tokio::select! {
             res = proxy.wake_tv() => { res?; },
-            () = sleep(Duration::from_millis(100)) => bail!("cecd not running"),
+            () = sleep(Duration::from_millis(1500)) => bail!("cecd not running"),
         }
         Ok(HdmiCecControl {
             proxy,
