@@ -2992,7 +2992,7 @@ mod test {
         ensure!(test_remote_interface_missing::<I, _>(&proxy, test).await?);
 
         register_remote::<I>(&test.connection, new_conn).await?;
-        sleep(Duration::from_micros(1)).await;
+        sleep(Duration::from_millis(1)).await;
 
         ensure!(!test_remote_interface_missing::<I, _>(&proxy, test).await?);
 
