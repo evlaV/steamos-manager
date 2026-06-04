@@ -7,7 +7,7 @@ repository = "https://gitlab.steamos.cloud/holo/steamos-manager/"
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
-cecd-proxy = { version = "0.1" }
+cecd-proxy = { version = "0.2" }
 clap = { version = "4.5", default-features = false, features = ["derive", "help", "std", "usage"] }
 config = { version = "0.15", default-features = false, features = ["async", "ini", "toml"] }
 gio = "0.21"
