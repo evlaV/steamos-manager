@@ -3605,12 +3605,14 @@ mod test {
             .await
             .unwrap();
         assert_eq!(proxy.tdp_limit().await.unwrap(), 10);
+        let mut receiver = proxy.receive_tdp_limit_changed().await;
+        assert_eq!(receiver.next().await.unwrap().get().await.unwrap(), 10);
         let fd = low_power_proxy.enter_download_mode("foo").await.unwrap();
-        sleep(Duration::from_millis(5)).await;
+        assert_eq!(receiver.next().await.unwrap().get().await.unwrap(), 5);
         assert_eq!(proxy.tdp_limit().await.unwrap(), 5);
         assert_eq!(remote.get().await.limit, 5);
         drop(fd);
-        sleep(Duration::from_millis(10)).await;
+        assert_eq!(receiver.next().await.unwrap().get().await.unwrap(), 10);
         assert_eq!(proxy.tdp_limit().await.unwrap(), 10);
         assert_eq!(remote.get().await.limit, 10);
 
