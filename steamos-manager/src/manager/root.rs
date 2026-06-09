@@ -19,6 +19,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{self, Fd};
 use zbus::{Connection, fdo, interface, proxy};
 
+use crate::battery::set_max_charge_level;
 use crate::cec::{HdmiCecHwController, cec_hw_controller};
 use crate::daemon::DaemonCommand;
 use crate::daemon::root::{Command, RootCommand};
@@ -35,8 +36,7 @@ use crate::job::JobManager;
 use crate::platform::platform_config;
 use crate::power::{
     CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, TdpLimitManager,
-    set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
-    tdp_limit_manager,
+    set_cpu_boost_state, set_cpu_scaling_governor, set_platform_profile, tdp_limit_manager,
 };
 use crate::process::{run_script, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};

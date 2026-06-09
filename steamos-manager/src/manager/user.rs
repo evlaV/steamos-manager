@@ -32,6 +32,7 @@ use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 
 use steamos_manager_macros::{RemoteManager, remote};
 
+use crate::battery::{BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, get_max_charge_level};
 use crate::cec::{CecdService, HdmiCecControl, HdmiCecState};
 use crate::daemon::DaemonCommand;
 use crate::daemon::user::Command;
@@ -49,10 +50,9 @@ use crate::manager::{MANAGER_PATH, RemoteInterface, RemoteInterfaceConfig, Remot
 use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, TdpManagerCommand,
-    get_available_cpu_scaling_governors, get_available_platform_profiles, get_cpu_boost_state,
-    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, register_tdp_limit1,
-    unregister_tdp_limit1,
+    CpuSchedulerManager, TdpManagerCommand, get_available_cpu_scaling_governors,
+    get_available_platform_profiles, get_cpu_boost_state, get_cpu_scaling_governor,
+    get_platform_profile, register_tdp_limit1, unregister_tdp_limit1,
 };
 use crate::proxy::{
     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
@@ -2023,6 +2023,7 @@ pub(crate) async fn create_interfaces(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::battery::BatteryChargeLimitMethod;
     use crate::daemon::channel;
     use crate::daemon::user::{UserCommand, UserContext};
     use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
@@ -2036,7 +2037,7 @@ mod test {
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
     };
     use crate::power::test::Nodes as PowerNodes;
-    use crate::power::{BatteryChargeLimitMethod, TdpLimitingMethod, TdpManagerService};
+    use crate::power::{TdpLimitingMethod, TdpManagerService};
     use crate::proxy::{LowPowerMode1Proxy, RemoteInterface1Proxy};
     use crate::session::{SessionManagerState, make_managed};
     use crate::systemd::test::MockManager;
