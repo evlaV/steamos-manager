@@ -7,7 +7,6 @@
 
 use anyhow::{Result, anyhow, bail, ensure};
 use async_trait::async_trait;
-use nix::errno::Errno;
 use num_enum::TryFromPrimitive;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -18,8 +17,8 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use strum::{Display, EnumIter, EnumString, VariantNames};
-use tokio::fs::{self, File, read_dir, read_to_string, try_exists};
-use tokio::io::{AsyncWriteExt, ErrorKind, Interest};
+use tokio::fs::{self, File, read_dir, try_exists};
+use tokio::io::{AsyncWriteExt, Interest};
 use tokio::net::unix::pipe;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
@@ -36,7 +35,7 @@ use crate::manager::MANAGER_PATH;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::TdpLimit1;
 use crate::proxy::TdpLimit1Proxy;
-use crate::sysfs::{SysfsWritten, find_sysdir, sysfs_queued_write};
+use crate::sysfs::find_sysdir;
 use crate::systemd::{EnableState, JobMode, SystemdUnit};
 use crate::{SerialOrderValidator, Service, path, write_synced};
 
@@ -63,16 +62,6 @@ const PLATFORM_PROFILE_PREFIX: &str = "/sys/class/platform-profile";
 
 const TDP_LIMIT1: &str = "power1_cap";
 const TDP_LIMIT2: &str = "power2_cap";
-
-#[cfg(not(test))]
-const SB_PATHS: &[&str] = &[
-    "/sys/bus/platform/drivers/acpi-battery/PNP0C0A:00/firmware_node/power_supply",
-    "/sys/bus/acpi/drivers/battery/PNP0C0A:00/power_supply",
-];
-#[cfg(test)]
-const SB_PATHS: &[&str] = &["power_supply", "power_supply_legacy"];
-pub const BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT: i32 = 10;
-const SB_LIMIT_PATH: &str = "charge_control_end_threshold";
 
 #[derive(Display, EnumString, Hash, Eq, PartialEq, Debug, Copy, Clone)]
 #[strum(serialize_all = "lowercase")]
@@ -223,18 +212,6 @@ pub(crate) enum TdpManagerCommand {
         Option<(OwnedBusName, OwnedObjectPath)>,
         oneshot::Sender<Result<()>>,
     ),
-}
-
-#[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone, Default)]
-#[strum(serialize_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum BatteryChargeLimitMethod {
-    #[default]
-    AcpiSb,
-    HwmonAttribute {
-        hwmon: String,
-        attribute: String,
-    },
 }
 
 async fn read_cpu_sysfs_contents<S: AsRef<Path>>(suffix: S) -> Result<String> {
@@ -661,72 +638,6 @@ impl<'proxy> TdpLimitManager for RemoteInterfaceLimitManager<'proxy> {
     }
 }
 
-async fn find_battery_charge_path() -> Result<PathBuf> {
-    let config = device_config().await?;
-    let config = config
-        .as_ref()
-        .and_then(|config| config.battery_charge_limit.as_ref())
-        .ok_or(anyhow!("No battery charge limit configured"))?;
-
-    match &config.method {
-        BatteryChargeLimitMethod::AcpiSb => {
-            for base in SB_PATHS {
-                let mut dir = match read_dir(path(base)).await {
-                    Ok(dir) => dir,
-                    Err(e) if e.kind() == ErrorKind::NotFound => continue,
-                    Err(e) => return Err(e.into()),
-                };
-                while let Some(entry) = dir.next_entry().await? {
-                    if !entry.file_type().await?.is_dir() {
-                        continue;
-                    }
-                    let path = entry.path();
-                    let path = match read_to_string(path.join("type")).await {
-                        Ok(s) if s.trim() == "Battery" => path.join(SB_LIMIT_PATH),
-                        Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
-                        _ => continue,
-                    };
-                    if try_exists(&path).await? {
-                        return Ok(path);
-                    }
-                }
-            }
-        }
-        BatteryChargeLimitMethod::HwmonAttribute { hwmon, attribute } => {
-            let base = find_hwmon(hwmon.as_str()).await?;
-            let path = base.join(attribute);
-            if try_exists(&path).await? {
-                return Ok(path);
-            }
-        }
-    }
-    bail!("Battery not found");
-}
-
-fn parse_max_charge_level(result: std::io::Result<String>) -> Result<i32> {
-    match result {
-        Ok(s) => s
-            .trim()
-            .parse()
-            .map_err(|e| anyhow!("Error parsing value: {e}")),
-        // asus-wmi may return ENODATA until userspace writes a value
-        Err(e) if e.raw_os_error().map(Errno::from_raw) == Some(Errno::ENODATA) => Ok(-1),
-        Err(e) => Err(anyhow!("Error reading sysfs: {e}")),
-    }
-}
-
-pub(crate) async fn get_max_charge_level() -> Result<i32> {
-    let path = find_battery_charge_path().await?;
-    parse_max_charge_level(read_to_string(path).await)
-}
-
-pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver<SysfsWritten>> {
-    ensure!((0..=100).contains(&limit), "Invalid limit");
-    let data = limit.to_string();
-    let path = find_battery_charge_path().await?;
-    sysfs_queued_write(path, data.as_bytes().to_owned()).await
-}
-
 pub(crate) async fn get_available_platform_profiles(name: &str) -> Result<Vec<String>> {
     let base = find_platform_profile(name).await?;
     Ok(fs::read_to_string(base.join("choices"))
@@ -1046,8 +957,8 @@ impl Service for TdpManagerService {
 pub(crate) mod test {
     use super::*;
     use crate::hardware::{
-        BatteryChargeLimitConfig, DeviceConfig, FanSpeedConfig, FirmwareAttributeConfig,
-        PerformanceProfileConfig, RangeConfig, TdpLimitConfig,
+        DeviceConfig, FanSpeedConfig, FirmwareAttributeConfig, PerformanceProfileConfig,
+        RangeConfig, TdpLimitConfig,
     };
     use crate::{enum_on_off, enum_roundtrip, testing};
     use anyhow::anyhow;
@@ -1414,125 +1325,6 @@ pub(crate) mod test {
             .await
             .expect("remove_file");
         assert!(get_cpu_boost_state().await.is_err());
-    }
-
-    #[tokio::test]
-    async fn read_max_charge_level_acpi_sb() {
-        let handle = testing::start();
-
-        let config = DeviceConfig {
-            battery_charge_limit: Some(BatteryChargeLimitConfig {
-                suggested_minimum_limit: 10,
-                method: BatteryChargeLimitMethod::AcpiSb,
-            }),
-            ..DeviceConfig::default()
-        };
-        handle.test.set_device_config(config).await;
-
-        let base = path(SB_PATHS[0]).join("BAT1");
-        create_dir_all(&base).await.expect("create_dir_all");
-
-        write(base.join("type"), "Battery\n").await.expect("write");
-
-        write(base.join(SB_LIMIT_PATH), "10\n")
-            .await
-            .expect("write");
-
-        assert_eq!(
-            find_battery_charge_path().await.unwrap(),
-            path(SB_PATHS[0]).join("BAT1/charge_control_end_threshold")
-        );
-
-        assert_eq!(get_max_charge_level().await.unwrap(), 10);
-
-        write(base.join(SB_LIMIT_PATH), "99\n")
-            .await
-            .expect("write");
-
-        assert_eq!(get_max_charge_level().await.unwrap(), 99);
-
-        assert!(set_max_charge_level(101).await.is_err());
-        assert!(set_max_charge_level(-1).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn read_max_charge_level_acpi_sb_legacy_path() {
-        let handle = testing::start();
-
-        let config = DeviceConfig {
-            battery_charge_limit: Some(BatteryChargeLimitConfig {
-                suggested_minimum_limit: 10,
-                method: BatteryChargeLimitMethod::AcpiSb,
-            }),
-            ..DeviceConfig::default()
-        };
-        handle.test.set_device_config(config).await;
-
-        let base = path(SB_PATHS[1]).join("BAT1");
-        create_dir_all(&base).await.expect("create_dir_all");
-
-        write(base.join("type"), "Battery\n").await.expect("write");
-
-        write(base.join(SB_LIMIT_PATH), "80\n")
-            .await
-            .expect("write");
-
-        assert_eq!(
-            find_battery_charge_path().await.unwrap(),
-            path(SB_PATHS[1]).join("BAT1/charge_control_end_threshold")
-        );
-
-        assert_eq!(get_max_charge_level().await.unwrap(), 80);
-    }
-
-    #[test]
-    fn parse_max_charge_level_enodata_is_unknown() {
-        let err = std::io::Error::from_raw_os_error(Errno::ENODATA as i32);
-        assert_eq!(parse_max_charge_level(Err(err)).unwrap(), -1);
-    }
-
-    #[tokio::test]
-    async fn read_max_charge_level_hwmmon() {
-        let handle = testing::start();
-
-        let config = DeviceConfig {
-            battery_charge_limit: Some(BatteryChargeLimitConfig {
-                suggested_minimum_limit: 10,
-                method: BatteryChargeLimitMethod::HwmonAttribute {
-                    hwmon: String::from("steamdeck_hwmon"),
-                    attribute: String::from("max_battery_charge_level"),
-                },
-            }),
-            ..DeviceConfig::default()
-        };
-        handle.test.set_device_config(config).await;
-
-        let base = path(HWMON_PREFIX).join("hwmon6");
-        create_dir_all(&base).await.expect("create_dir_all");
-
-        write(base.join("name"), "steamdeck_hwmon\n")
-            .await
-            .expect("write");
-
-        write(base.join("max_battery_charge_level"), "10\n")
-            .await
-            .expect("write");
-
-        assert_eq!(
-            find_battery_charge_path().await.unwrap(),
-            path(HWMON_PREFIX).join("hwmon6/max_battery_charge_level")
-        );
-
-        assert_eq!(get_max_charge_level().await.unwrap(), 10);
-
-        write(base.join("max_battery_charge_level"), "99\n")
-            .await
-            .expect("write");
-
-        assert_eq!(get_max_charge_level().await.unwrap(), 99);
-
-        assert!(set_max_charge_level(101).await.is_err());
-        assert!(set_max_charge_level(-1).await.is_err());
     }
 
     #[tokio::test]

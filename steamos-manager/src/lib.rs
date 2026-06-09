@@ -25,6 +25,7 @@ use zbus::names::UniqueName;
 
 pub use steamos_manager_proxy as proxy;
 
+mod battery;
 mod ds_inhibit;
 mod error;
 mod inputplumber;
