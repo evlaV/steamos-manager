@@ -32,7 +32,10 @@ use zbus::{Connection, ObjectServer, Proxy, interface, zvariant};
 
 use steamos_manager_macros::{RemoteManager, remote};
 
-use crate::battery::{BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, get_max_charge_level};
+use crate::battery::{
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, available_charge_types, get_active_charge_type,
+    get_max_charge_level,
+};
 use crate::cec::{CecdService, HdmiCecControl, HdmiCecState};
 use crate::daemon::DaemonCommand;
 use crate::daemon::user::Command;
@@ -55,9 +58,9 @@ use crate::power::{
     get_platform_profile, register_tdp_limit1, unregister_tdp_limit1,
 };
 use crate::proxy::{
-    BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
-    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy, Storage1Proxy,
-    TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
+    BatteryChargeLimit1Proxy, BatteryChargeType1Proxy, CpuBoost1Proxy, FactoryReset1Proxy,
+    FanControl1Proxy, GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy,
+    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
 };
 use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
 use crate::session::{
@@ -138,6 +141,11 @@ struct BatteryChargeLimit1 {
     order: SerialOrderValidator,
 }
 
+struct BatteryChargeType1 {
+    proxy: Proxy<'static>,
+    order: SerialOrderValidator,
+}
+
 struct CpuBoost1 {
     proxy: Proxy<'static>,
 }
@@ -208,6 +216,8 @@ struct RemoteInterface1 {
 
     #[remote]
     remote_battery_charge_limit1: Option<BatteryChargeLimit1RemoteOwner>,
+    #[remote]
+    remote_battery_charge_type1: Option<BatteryChargeType1RemoteOwner>,
     #[remote]
     remote_cpu_boost1: Option<CpuBoost1RemoteOwner>,
     #[remote]
@@ -328,6 +338,35 @@ impl BatteryChargeLimit1 {
             return BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT;
         };
         config.suggested_minimum_limit
+    }
+}
+
+#[remote(name = "com.steampowered.SteamOSManager1.BatteryChargeType1")]
+impl BatteryChargeType1 {
+    #[zbus(property(emits_changed_signal = "const"))]
+    async fn available_charge_types(&self) -> fdo::Result<Vec<String>> {
+        available_charge_types().await.map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn charge_type(&self) -> fdo::Result<String> {
+        get_active_charge_type().await.map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn set_charge_type(
+        &mut self,
+        ty: &str,
+        #[zbus(header)] header: Option<Header<'_>>,
+    ) -> fdo::Result<()> {
+        if header
+            .map(|header| !self.order.check_header(header))
+            .unwrap_or(true)
+        {
+            debug!("set BatteryChargeType: discarding out of order serial");
+            return Ok(());
+        }
+        Ok(self.proxy.call("SetChargeType", &(ty)).await?)
     }
 }
 
@@ -884,6 +923,7 @@ impl RemoteInterface1 {
             system,
             job_manager,
             remote_battery_charge_limit1: None,
+            remote_battery_charge_type1: None,
             remote_cpu_boost1: None,
             remote_factory_reset1: None,
             remote_fan_control1: None,
@@ -1828,6 +1868,10 @@ pub(crate) async fn create_interfaces(
         proxy: proxy.clone(),
         order: SerialOrderValidator::default(),
     };
+    let battery_charge_type = BatteryChargeType1 {
+        proxy: proxy.clone(),
+        order: SerialOrderValidator::default(),
+    };
     let cpu_boost = CpuBoost1 {
         proxy: proxy.clone(),
     };
@@ -1902,6 +1946,10 @@ pub(crate) async fn create_interfaces(
 
     if get_max_charge_level().await.is_ok() {
         object_server.at(MANAGER_PATH, battery_charge_limit).await?;
+    }
+
+    if available_charge_types().await.is_ok() {
+        object_server.at(MANAGER_PATH, battery_charge_type).await?;
     }
 
     if get_cpu_boost_state().await.is_ok() {
@@ -2236,6 +2284,15 @@ mod test {
         }
     }
 
+    struct BatterySetup;
+
+    #[async_trait]
+    impl TestSetup for BatterySetup {
+        async fn setup(&mut self, _: &testing::TestHandle, _: &Connection) -> Result<()> {
+            crate::battery::test::create_nodes().await
+        }
+    }
+
     async fn start<S: TestSetup + Sync + Send>(mut config: TestConfig<S>) -> Result<TestHandle<S>> {
         let mut handle = testing::start();
         let (tx_ctx, mut rx_ctx) = channel::<UserContext>();
@@ -2376,6 +2433,26 @@ mod test {
         let test = start(TestConfig::none()).await.expect("start");
 
         assert!(test_interface_missing::<BatteryChargeLimit1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_battery_charge_type() {
+        let test = start(TestConfig::only_setup(BatterySetup {}))
+            .await
+            .expect("start");
+
+        assert!(
+            test_interface_matches::<BatteryChargeType1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_battery_charge_type() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<BatteryChargeType1>(&test.connection).await);
     }
 
     #[tokio::test]

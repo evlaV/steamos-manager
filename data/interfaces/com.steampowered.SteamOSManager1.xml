@@ -55,6 +55,29 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.BatteryChargeType1
+      @short_description: Optional interface for non-numeric battery charging
+      limit properties.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.BatteryChargeType1">
+
+    <!--
+        ChargeType:
+
+        Which charging type is currently in used.
+    -->
+    <property name="ChargeType" type="s" access="readwrite"/>
+
+    <!--
+        AvailableChargeTypes:
+
+        An array of available charging types on this device.
+    -->
+    <property name="AvailableChargeTypes" type="as" access="read"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.CpuBoost1
       @short_description: Optional interface adjusting CPU boost state.
   -->
