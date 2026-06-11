@@ -16,12 +16,12 @@ use steamos_manager::cec::{HdmiCecControl, HdmiCecState};
 use steamos_manager::hardware::{FactoryResetKind, FanControlState};
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
-    AmbientLightSensor1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy, CpuScaling1Proxy,
-    CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy, GpuPerformanceLevel1Proxy,
-    GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy, Manager2Proxy,
-    PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy, Storage1Proxy,
-    TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiBackend1Proxy, WifiDebug1Proxy,
-    WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
+    AmbientLightSensor1Proxy, BatteryChargeLimit1Proxy, BatteryChargeType1Proxy, CpuBoost1Proxy,
+    CpuScaling1Proxy, CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy,
+    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy,
+    Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy,
+    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiBackend1Proxy,
+    WifiDebug1Proxy, WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
 };
 use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
@@ -226,6 +226,18 @@ enum Commands {
     SetMaxChargeLevel {
         /// Valid levels are 1 - 100, or -1 to reset to default
         level: i32,
+    },
+
+    /// Get the list of available charging types
+    AvailableChargeTypes,
+
+    /// Get the currently active charging type
+    GetChargeType,
+
+    /// Set the charging type
+    SetChargeType {
+        #[arg(name = "type")]
+        ty: String,
     },
 
     /// Get the recommended minimum for a charge level limit
@@ -684,6 +696,22 @@ async fn main() -> Result<()> {
         Commands::SetMaxChargeLevel { level } => {
             let proxy = BatteryChargeLimit1Proxy::new(&conn).await?;
             proxy.set_max_charge_level(level).await?;
+        }
+        Commands::AvailableChargeTypes => {
+            let proxy = BatteryChargeType1Proxy::new(&conn).await?;
+            let types = proxy.available_charge_types().await?;
+            for ty in types.into_iter() {
+                println!("- {ty}");
+            }
+        }
+        Commands::GetChargeType => {
+            let proxy = BatteryChargeType1Proxy::new(&conn).await?;
+            let ty = proxy.charge_type().await?;
+            println!("Charge type: {ty}");
+        }
+        Commands::SetChargeType { ty } => {
+            let proxy = BatteryChargeType1Proxy::new(&conn).await?;
+            proxy.set_charge_type(&ty).await?;
         }
         Commands::SuggestedMinimumChargeLimit => {
             let proxy = BatteryChargeLimit1Proxy::new(&conn).await?;
