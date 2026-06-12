@@ -22,5 +22,19 @@ friendly_name = "MSI Claw"
 [gpu_performance]
 driver = "intel"
 
+[performance_profile]
+platform_profile_name = "msi-wmi-platform"
+suggested_default = "balanced"
+
+[tdp_limit]
+method = "firmware_attribute"
+
+[tdp_limit.firmware_attribute]
+attribute = "msi-wmi-platform"
+performance_profile = "performance"
+
 [inputplumber]
 target_devices = ["deck-uhid", "keyboard"]
+
+[battery_charge_limit]
+method = "acpi_sb"
