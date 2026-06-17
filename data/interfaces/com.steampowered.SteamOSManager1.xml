@@ -299,6 +299,13 @@
     -->
     <property name="WakeDeviceSupported" type="b" access="read"/>
 
+    <!--
+        MakeActive:
+
+        Wake up any attached TV and make this device the active source
+    -->
+    <method name="MakeActive"/>
+
   </interface>
 
   <!--

@@ -19,6 +19,9 @@ use zbus::proxy;
     assume_defaults = true
 )]
 pub trait HdmiCec2 {
+    /// MakeActive method
+    fn make_active(&self) -> zbus::Result<()>;
+
     /// EnableControl property
     #[zbus(property)]
     fn enable_control(&self) -> zbus::Result<bool>;

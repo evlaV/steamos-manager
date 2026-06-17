@@ -8,7 +8,7 @@
 
 use anyhow::{Error, Result, bail};
 use async_trait::async_trait;
-use cecd_proxy::{CecDevice1Proxy, Config1Proxy};
+use cecd_proxy::{CecDevice1Proxy, Config1Proxy, Daemon1Proxy};
 use linux_cec::{PhysicalAddress, VendorId};
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
@@ -112,12 +112,14 @@ struct CecdSystemFragment {
 
 pub struct HdmiCecControl<'dbus> {
     proxy: Config1Proxy<'dbus>,
+    daemon: Daemon1Proxy<'dbus>,
     connection: Connection,
 }
 
 impl<'dbus> HdmiCecControl<'dbus> {
     pub async fn new(connection: &Connection) -> Result<HdmiCecControl<'dbus>> {
         let proxy = Config1Proxy::new(connection).await?;
+        let daemon = Daemon1Proxy::new(connection).await?;
         // Sanity check to make sure the daemon is active
         // Note, this can easily take 250-300 ms, so use a generous timeout in
         // case the CEC bus is busy.
@@ -127,6 +129,7 @@ impl<'dbus> HdmiCecControl<'dbus> {
         }
         Ok(HdmiCecControl {
             proxy,
+            daemon,
             connection: connection.clone(),
         })
     }
@@ -250,6 +253,10 @@ impl<'dbus> HdmiCecControl<'dbus> {
             ..self.get_config().await?
         };
         self.write_config(&config).await
+    }
+
+    pub async fn wake_tv(&self) -> Result<()> {
+        Ok(self.daemon.wake().await?)
     }
 }
 

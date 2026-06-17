@@ -731,6 +731,15 @@ impl HdmiCec2 {
             .await
             .map_err(to_zbus_fdo_error)
     }
+
+    async fn make_active(&self) -> fdo::Result<()> {
+        self.hdmi_cec
+            .lock()
+            .await
+            .wake_tv()
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
 }
 
 #[interface(name = "com.steampowered.SteamOSManager1.LowPowerMode1")]
