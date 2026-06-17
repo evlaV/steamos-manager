@@ -761,6 +761,11 @@ mod test {
     #[interface(name = "com.steampowered.CecDaemon1.Config1")]
     impl MockCecdConfig {}
 
+    struct MockDaemon;
+
+    #[interface(name = "com.steampowered.CecDaemon1.Daemon1")]
+    impl MockDaemon {}
+
     struct MockCecdDevice {
         phys_addr: u16,
     }
@@ -789,6 +794,9 @@ mod test {
             .await?;
         object_server
             .at("/com/steampowered/CecDaemon1/Daemon", MockCecdConfig {})
+            .await?;
+        object_server
+            .at("/com/steampowered/CecDaemon1/Daemon", MockDaemon {})
             .await?;
         object_server
             .at("/com/steampowered/CecDaemon1", ObjectManager {})
@@ -820,11 +828,13 @@ mod test {
         .unwrap();
 
         let proxy = Config1Proxy::new(&test.connection).await.unwrap();
+        let daemon = Daemon1Proxy::new(&test.connection).await.unwrap();
         let service = CecdService::new(
             &test.connection,
             &HdmiCecControl {
                 connection: test.connection.clone(),
                 proxy,
+                daemon,
             },
         )
         .await
@@ -843,11 +853,13 @@ mod test {
         .unwrap();
 
         let proxy = Config1Proxy::new(&test.connection).await.unwrap();
+        let daemon = Daemon1Proxy::new(&test.connection).await.unwrap();
         let service = CecdService::new(
             &test.connection,
             &HdmiCecControl {
                 connection: test.connection.clone(),
                 proxy,
+                daemon,
             },
         )
         .await
@@ -874,11 +886,13 @@ mod test {
             .unwrap();
 
         let proxy = Config1Proxy::new(&test.connection).await.unwrap();
+        let daemon = Daemon1Proxy::new(&test.connection).await.unwrap();
         let service = CecdService::new(
             &test.connection,
             &HdmiCecControl {
                 connection: test.connection.clone(),
                 proxy,
+                daemon,
             },
         )
         .await;
@@ -904,11 +918,13 @@ mod test {
             .unwrap();
 
         let proxy = Config1Proxy::new(&test.connection).await.unwrap();
+        let daemon = Daemon1Proxy::new(&test.connection).await.unwrap();
         let service = CecdService::new(
             &test.connection,
             &HdmiCecControl {
                 connection: test.connection.clone(),
                 proxy,
+                daemon,
             },
         )
         .await
