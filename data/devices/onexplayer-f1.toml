@@ -12,6 +12,27 @@ device = "onexplayer_f1"
 variant = "F1Pro"
 friendly_name = "ONEXPLAYER F1"
 
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER F1 EVA-01"
+device = "onexplayer_f1"
+variant = "F1EVA"
+friendly_name = "ONEXPLAYER F1"
+
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER F1 EVA-02"
+device = "onexplayer_f1"
+variant = "F1ProEVA"
+friendly_name = "ONEXPLAYER F1"
+
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER F1 OLED"
+device = "onexplayer_f1"
+variant = "F1OLED"
+friendly_name = "ONEXPLAYER F1"
+
 [gpu_performance]
 driver = "amdgpu"
 
