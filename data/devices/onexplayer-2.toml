@@ -14,6 +14,20 @@ friendly_name = "ONEXPLAYER 2"
 
 [[device]]
 dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER 2 PRO ARP23P"
+device = "onexplayer_2"
+variant = "PRO ARP23P"
+friendly_name = "ONEXPLAYER 2"
+
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
+dmi.product_name = "ONEXPLAYER 2 PRO ARP23H"
+device = "onexplayer_2"
+variant = "PRO ARP23H"
+friendly_name = "ONEXPLAYER 2"
+
+[[device]]
+dmi.sys_vendor = "ONE-NETBOOK"
 dmi.product_name = "ONEXPLAYER 2 PRO ARP23 EVA-01"
 device = "onexplayer_2"
 variant = "PRO ARP23 EVA-01"
