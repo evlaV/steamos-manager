@@ -131,3 +131,64 @@ pub(crate) async fn sysfs_queued_write(
         .send(path, data)
         .await)
 }
+
+pub(crate) async fn parse_sysfs_choice(
+    path: impl AsRef<Path>,
+) -> Result<(Vec<String>, Option<String>)> {
+    let choices = read_to_string(path.as_ref()).await?.trim().to_string();
+
+    let mut active = None;
+    let choices = choices.split_whitespace().map(|choice| {
+        if choice.starts_with('[') && choice.ends_with(']') {
+            let choice = choice[1..choice.len() - 1].to_string();
+            active = Some(choice.clone());
+            choice
+        } else {
+            choice.to_string()
+        }
+    });
+
+    Ok((choices.collect(), active))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_parse_choice() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+
+        write_synced(path, b"[a] b c").await.unwrap();
+        let (choices, active) = parse_sysfs_choice(path).await.unwrap();
+        assert_eq!(choices, &["a", "b", "c"]);
+        assert_eq!(active.unwrap(), "a");
+
+        write_synced(path, b"a [b] c").await.unwrap();
+        let (choices, active) = parse_sysfs_choice(path).await.unwrap();
+        assert_eq!(choices, &["a", "b", "c"]);
+        assert_eq!(active.unwrap(), "b");
+
+        write_synced(path, b"a b [c]").await.unwrap();
+        let (choices, active) = parse_sysfs_choice(path).await.unwrap();
+        assert_eq!(choices, &["a", "b", "c"]);
+        assert_eq!(active.unwrap(), "c");
+
+        write_synced(path, b"a b c").await.unwrap();
+        let (choices, active) = parse_sysfs_choice(path).await.unwrap();
+        assert_eq!(choices, &["a", "b", "c"]);
+        assert!(active.is_none());
+
+        write_synced(path, b"a [b]  c").await.unwrap();
+        let (choices, active) = parse_sysfs_choice(path).await.unwrap();
+        assert_eq!(choices, &["a", "b", "c"]);
+        assert_eq!(active.unwrap(), "b");
+
+        write_synced(path, b"a  [b] c").await.unwrap();
+        let (choices, active) = parse_sysfs_choice(path).await.unwrap();
+        assert_eq!(choices, &["a", "b", "c"]);
+        assert_eq!(active.unwrap(), "b");
+    }
+}

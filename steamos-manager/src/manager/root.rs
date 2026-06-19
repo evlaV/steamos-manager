@@ -19,6 +19,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{self, Fd};
 use zbus::{Connection, fdo, interface, proxy};
 
+use crate::battery::{set_charge_type, set_max_charge_level};
 use crate::cec::{HdmiCecHwController, cec_hw_controller};
 use crate::daemon::DaemonCommand;
 use crate::daemon::root::{Command, RootCommand};
@@ -35,8 +36,7 @@ use crate::job::JobManager;
 use crate::platform::platform_config;
 use crate::power::{
     CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, TdpLimitManager,
-    set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
-    tdp_limit_manager,
+    set_cpu_boost_state, set_cpu_scaling_governor, set_platform_profile, tdp_limit_manager,
 };
 use crate::process::{run_script, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
@@ -631,6 +631,38 @@ impl SteamOSManager {
                     .await
                 {
                     interface.max_charge_level_changed().await?;
+                }
+                res
+            } else {
+                Ok(())
+            }
+        });
+        Ok(())
+    }
+
+    #[zbus(signal)]
+    async fn charge_type_changed(signal_emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
+    async fn set_charge_type(
+        &mut self,
+        ty: &str,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        if !self.order.check_header(header) {
+            debug!("SetChargeType: discarding out of order serial");
+            return Ok(());
+        }
+        let written = set_charge_type(ty).await.map_err(to_zbus_fdo_error)?;
+        let connection = connection.clone();
+        spawn(async move {
+            if let Ok(SysfsWritten::Written(res)) = written.await {
+                if let Ok(interface) = connection
+                    .object_server()
+                    .interface::<_, Self>("/com/steampowered/SteamOSManager1")
+                    .await
+                {
+                    interface.charge_type_changed().await?;
                 }
                 res
             } else {
