@@ -26,6 +26,11 @@ use crate::{path, write_synced};
 
 pub(crate) const AMDGPU_HWMON_NAME: &str = "amdgpu";
 
+pub(crate) const DEVFREQ_AVAILABLE_FREQ: &str = "available_frequencies";
+pub(crate) const DEVFREQ_CURRENT_FREQ: &str = "cur_freq";
+pub(crate) const DEVFREQ_MINIMUM_FREQ: &str = "min_freq";
+pub(crate) const DEVFREQ_MAXIMUM_FREQ: &str = "max_freq";
+
 #[cfg(not(test))]
 const DRM_PREFIX: &str = "/sys/class/drm";
 #[cfg(test)]
@@ -96,6 +101,7 @@ pub enum GpuPowerProfileDriverType {
 pub enum GpuPerformanceLevelDriverType {
     Amdgpu,
     Intel,
+    Devfreq,
 }
 
 #[derive(Debug)]
@@ -116,6 +122,12 @@ pub(crate) struct IntelGpuConfig {
     max_freq: &'static str,
     range_min: &'static str,
     range_max: &'static str,
+}
+
+#[derive(Debug)]
+pub(crate) struct DevfreqGpuPerformanceLevelDriver {
+    sysfs_path: PathBuf,
+    available_freqs: Vec<u32>,
 }
 
 #[async_trait]
@@ -161,6 +173,13 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
         GpuPerformanceLevelDriverType::Amdgpu => Box::new(AmdgpuPerformanceLevelDriver {}),
         GpuPerformanceLevelDriverType::Intel => {
             Box::new(IntelGpuPerformanceLevelDriver::new().await?)
+        }
+        GpuPerformanceLevelDriverType::Devfreq => {
+            let path = config
+                .sysfs_path
+                .as_ref()
+                .expect("devfreq gpu performance driver needs a sysfs_path");
+            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into()).await?)
         }
     })
 }
@@ -586,6 +605,81 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
         } else {
             self.write_freq(self.config.min_freq, clocks).await?;
             self.write_freq(self.config.max_freq, clocks).await?;
+        }
+
+        Ok(())
+    }
+}
+
+impl DevfreqGpuPerformanceLevelDriver {
+    pub async fn new(path: PathBuf) -> Result<Self> {
+        let available_freqs = fs::read_to_string(path.join(DEVFREQ_AVAILABLE_FREQ))
+            .await
+            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
+        Ok(Self {
+            sysfs_path: path,
+            available_freqs: available_freqs
+                .split_whitespace()
+                .map(|v| {
+                    v.parse()
+                        .unwrap_or_else(|_| panic!("available frequencies should be an int: {v}"))
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn write_value(&self, file: &str, value: &str) -> Result<()> {
+        Ok(
+            write_synced(self.sysfs_path.join(PathBuf::from(file)), value.as_bytes())
+                .await
+                .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?,
+        )
+    }
+}
+
+#[async_trait]
+impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+    fn performance_level_from_str(&self, _value: &str) -> Result<GpuPerformanceLevel> {
+        Err(anyhow!("not implemented"))
+    }
+    async fn get_available_performance_levels(&self) -> Result<Vec<GpuPerformanceLevel>> {
+        Err(anyhow!("not implemented"))
+    }
+    async fn get_performance_level(&self) -> Result<GpuPerformanceLevel> {
+        Err(anyhow!("not implemented"))
+    }
+    async fn set_performance_level(&self, _level: GpuPerformanceLevel) -> Result<()> {
+        Err(anyhow!("not implemented"))
+    }
+
+    async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>> {
+        Ok(
+            *self.available_freqs.first().unwrap_or(&0)
+                ..=*self.available_freqs.last().unwrap_or(&0),
+        )
+    }
+    async fn get_clocks(&self) -> Result<u32> {
+        let current_freq = fs::read_to_string(self.sysfs_path.join(DEVFREQ_CURRENT_FREQ))
+            .await
+            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
+
+        Ok(current_freq.trim().parse()?)
+    }
+
+    async fn set_clocks(&self, clocks: u32) -> Result<()> {
+        let cur = self.get_clocks().await?;
+
+        // Write order to widen the range first, then narrow it
+        if cur < clocks {
+            self.write_value(DEVFREQ_MINIMUM_FREQ, &clocks.to_string())
+                .await?;
+            self.write_value(DEVFREQ_MAXIMUM_FREQ, &clocks.to_string())
+                .await?;
+        } else {
+            self.write_value(DEVFREQ_MAXIMUM_FREQ, &clocks.to_string())
+                .await?;
+            self.write_value(DEVFREQ_MINIMUM_FREQ, &clocks.to_string())
+                .await?;
         }
 
         Ok(())
