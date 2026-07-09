@@ -17,11 +17,11 @@ use steamos_manager::hardware::{FactoryResetKind, FanControlState};
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
     AmbientLightSensor1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy, CpuScaling1Proxy,
-    CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy, GpuPerformanceLevel1Proxy,
-    GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy, Manager2Proxy,
-    PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy, Storage1Proxy,
-    TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiBackend1Proxy, WifiDebug1Proxy,
-    WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
+    CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy, FirmwareDebug1Proxy,
+    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy,
+    Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy,
+    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiBackend1Proxy,
+    WifiDebug1Proxy, WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
 };
 use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
@@ -57,6 +57,15 @@ enum Commands {
 
     /// Get the fan control state
     GetFanControlState,
+
+    /// Enable EC logging
+    SetEcLogging {
+        /// Valid options are 0 (off) or 1 (on)
+        state: u32,
+    },
+
+    /// Get the current state of EC logging
+    GetEcLogging,
 
     /// Get the available CPU scaling governors supported on this device
     GetAvailableCpuScalingGovernors,
@@ -440,6 +449,15 @@ async fn main() -> Result<()> {
                 Ok(s) => println!("Fan control state: {s}"),
                 Err(_) => println!("Got unknown value {state} from backend"),
             }
+        }
+        Commands::SetEcLogging { state } => {
+            let proxy = FirmwareDebug1Proxy::new(&conn).await?;
+            proxy.set_ec_logging(state).await?;
+        }
+        Commands::GetEcLogging => {
+            let proxy = FirmwareDebug1Proxy::new(&conn).await?;
+            let state = proxy.ec_logging().await?;
+            println!("Ec logging: {state}");
         }
         Commands::GetAvailableCpuScalingGovernors => {
             let proxy = CpuScaling1Proxy::new(&conn).await?;

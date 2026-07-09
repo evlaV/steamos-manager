@@ -28,3 +28,6 @@ no_validate_flag = "--skip-validation"
 
 [fan_control]
 systemd = "jupiter-fan-control.service"
+
+[firmware_debug]
+systemd = "ec-log.service"
