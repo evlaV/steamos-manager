@@ -255,11 +255,7 @@ impl SteamOSManager {
         state: u32,
         #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
     ) -> zbus::Result<()> {
-        let enable: bool = match state {
-            0 => false,
-            1 => true,
-            _ => return Err(fdo::Error::InvalidArgs(String::from("Invalid value")).into()),
-        };
+        let enable: bool = state > 0;
 
         let config = device_config().await.map_err(to_zbus_error)?;
         match config
