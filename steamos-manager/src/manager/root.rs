@@ -230,11 +230,7 @@ impl SteamOSManager {
                 let active = systemd_service.active().await.map_err(to_zbus_fdo_error)?;
                 Ok(active.is_active() as u32)
             }
-            Some(ServiceConfig::Script {
-                start: _,
-                stop: _,
-                status,
-            }) => {
+            Some(ServiceConfig::Script { status, .. }) => {
                 let res = script_exit_code(&status.script, &status.script_args)
                     .await
                     .map_err(to_zbus_fdo_error)?;
@@ -267,29 +263,18 @@ impl SteamOSManager {
                     .await
                     .map_err(to_zbus_error)?;
                 if enable {
-                    systemd_service
-                        .start(JobMode::Fail)
-                        .await
-                        .map_err(to_zbus_error)?;
+                    systemd_service.start(JobMode::Fail).await
                 } else {
-                    systemd_service
-                        .stop(JobMode::Fail)
-                        .await
-                        .map_err(to_zbus_error)?;
+                    systemd_service.stop(JobMode::Fail).await
                 }
+                .map_err(to_zbus_error)?;
             }
-            Some(ServiceConfig::Script {
-                start,
-                stop,
-                status: _,
-            }) => match enable {
-                true => run_script(&start.script, &start.script_args)
-                    .await
-                    .map_err(to_zbus_error)?,
-                false => run_script(&stop.script, &stop.script_args)
-                    .await
-                    .map_err(to_zbus_error)?,
-            },
+            Some(ServiceConfig::Script { start, stop, .. }) => if enable {
+                run_script(&start.script, &start.script_args).await
+            } else {
+                run_script(&stop.script, &stop.script_args).await
+            }
+            .map_err(to_zbus_error)?,
             None => {
                 return Err(zbus::Error::Failure(String::from(
                     "Firmware debug not configured",

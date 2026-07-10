@@ -1767,7 +1767,7 @@ async fn create_platform_interfaces(
 async fn create_device_interfaces(
     proxy: &Proxy<'static>,
     object_server: &ObjectServer,
-    connection: &Connection,
+    system: &Connection,
     tdp_manager: Option<UnboundedSender<TdpManagerCommand>>,
 ) -> Result<()> {
     let Some(config) = device_config().await? else {
@@ -1820,7 +1820,7 @@ async fn create_device_interfaces(
     }
 
     if let Some(config) = config.firmware_debug.as_ref() {
-        match config.is_valid(connection, true).await {
+        match config.is_valid(system, true).await {
             Ok(true) => {
                 object_server.at(MANAGER_PATH, firmware_debug).await?;
             }
