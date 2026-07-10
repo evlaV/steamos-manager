@@ -153,6 +153,8 @@ pub async fn daemon_reload(connection: &Connection) -> Result<()> {
 impl<'dbus> SystemdUnit<'dbus> {
     pub async fn exists(connection: &Connection, name: &str) -> Result<bool> {
         let manager = SystemdManagerProxy::new(connection).await?;
+        // This is kinda hacky, but zbus makes it pretty hard to get the proper error name
+        let expected_error = format!("Unit {name} not loaded.");
         match manager.load_unit(name).await {
             Ok(path) => {
                 let unit = SystemdUnitProxy::builder(connection)
@@ -167,6 +169,7 @@ impl<'dbus> SystemdUnit<'dbus> {
             {
                 Ok(false)
             }
+            Err(zbus::Error::Failure(message)) if message == expected_error => Ok(false),
             Err(e) => Err(e.into()),
         }
     }

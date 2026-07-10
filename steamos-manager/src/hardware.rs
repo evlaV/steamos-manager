@@ -396,7 +396,7 @@ pub mod test {
     use super::*;
     use crate::error::to_zbus_fdo_error;
     use crate::platform::{PlatformConfig, ServiceConfig};
-    use crate::{enum_roundtrip, testing};
+    use crate::{enum_on_off, enum_roundtrip, testing};
     use std::time::Duration;
     use tokio::fs::{create_dir_all, read_to_string, write};
     use tokio::time::sleep;
@@ -785,6 +785,21 @@ pub mod test {
             device_variant().await.unwrap(),
             (String::from("zotac_gaming_zone"), String::from("G1A1W"))
         );
+    }
+
+    #[test]
+    fn ec_logging_state_roundtrip() {
+        enum_roundtrip!(ECLoggingState {
+            0: u32 = Disabled,
+            1: u32 = Enabled,
+            "disabled": str = Disabled,
+            "enabled": str = Enabled,
+        });
+        enum_on_off!(ECLoggingState => (Enabled, Disabled));
+        assert!(ECLoggingState::try_from(2).is_err());
+        assert!(ECLoggingState::from_str("enabld").is_err());
+        assert!(ECLoggingState::from_str("ENABLED").is_ok());
+        assert!(ECLoggingState::from_str("DiSaBlEd").is_ok());
     }
 
     #[test]
