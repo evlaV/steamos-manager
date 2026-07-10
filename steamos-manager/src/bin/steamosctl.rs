@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, stderr};
 use std::path::PathBuf;
 use steamos_manager::cec::{HdmiCecControl, HdmiCecState};
-use steamos_manager::hardware::{FactoryResetKind, FanControlState};
+use steamos_manager::hardware::{ECLoggingState, FactoryResetKind, FanControlState};
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
     AmbientLightSensor1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy, CpuScaling1Proxy,
@@ -60,8 +60,8 @@ enum Commands {
 
     /// Enable EC logging
     SetEcLogging {
-        /// Valid options are 0 (off) or 1 (on)
-        state: u32,
+        /// Valid states are `enabled`, `disabled`
+        state: ECLoggingState,
     },
 
     /// Get the current state of EC logging
@@ -452,12 +452,15 @@ async fn main() -> Result<()> {
         }
         Commands::SetEcLogging { state } => {
             let proxy = FirmwareDebug1Proxy::new(&conn).await?;
-            proxy.set_ec_logging(state).await?;
+            proxy.set_ec_logging(state as u32).await?;
         }
         Commands::GetEcLogging => {
             let proxy = FirmwareDebug1Proxy::new(&conn).await?;
             let state = proxy.ec_logging().await?;
-            println!("Ec logging: {state}");
+            match ECLoggingState::try_from(state) {
+                Ok(s) => println!("Ec logging state: {s}"),
+                Err(_) => println!("Got unknown value {state} from backend"),
+            }
         }
         Commands::GetAvailableCpuScalingGovernors => {
             let proxy = CpuScaling1Proxy::new(&conn).await?;

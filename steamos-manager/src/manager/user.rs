@@ -1698,9 +1698,6 @@ async fn create_platform_interfaces(
     let fan_control = FanControl1 {
         proxy: proxy.clone(),
     };
-    let firmware_debug = FirmwareDebug1 {
-        proxy: proxy.clone(),
-    };
     let storage = Storage1 {
         proxy: proxy.clone(),
         job_manager: job_manager.clone(),
@@ -1731,16 +1728,6 @@ async fn create_platform_interfaces(
             }
             Ok(false) => (),
             Err(e) => error!("Failed to verify if fan control config is valid: {e}"),
-        }
-    }
-
-    if let Some(config) = config.firmware_debug.as_ref() {
-        match config.is_valid(connection, true).await {
-            Ok(true) => {
-                object_server.at(MANAGER_PATH, firmware_debug).await?;
-            }
-            Ok(false) => (),
-            Err(e) => error!("Failed to verify if firmware debug config is valid: {e}"),
         }
     }
 
@@ -1780,6 +1767,7 @@ async fn create_platform_interfaces(
 async fn create_device_interfaces(
     proxy: &Proxy<'static>,
     object_server: &ObjectServer,
+    connection: &Connection,
     tdp_manager: Option<UnboundedSender<TdpManagerCommand>>,
 ) -> Result<()> {
     let Some(config) = device_config().await? else {
@@ -1789,6 +1777,9 @@ async fn create_device_interfaces(
     let performance_profile = PerformanceProfile1 {
         proxy: proxy.clone(),
         tdp_limit_manager: tdp_manager.clone(),
+    };
+    let firmware_debug = FirmwareDebug1 {
+        proxy: proxy.clone(),
     };
 
     if let Some(manager) = tdp_manager {
@@ -1826,6 +1817,16 @@ async fn create_device_interfaces(
             .is_empty()
     {
         object_server.at(MANAGER_PATH, performance_profile).await?;
+    }
+
+    if let Some(config) = config.firmware_debug.as_ref() {
+        match config.is_valid(connection, true).await {
+            Ok(true) => {
+                object_server.at(MANAGER_PATH, firmware_debug).await?;
+            }
+            Ok(false) => (),
+            Err(e) => error!("Failed to verify if firmware debug config is valid: {e}"),
+        }
     }
 
     Ok(())
@@ -1912,7 +1913,9 @@ pub(crate) async fn create_interfaces(
 
     let object_server = session.object_server();
 
-    if let Err(e) = create_device_interfaces(&proxy, object_server, tdp_manager.clone()).await {
+    if let Err(e) =
+        create_device_interfaces(&proxy, object_server, &system, tdp_manager.clone()).await
+    {
         error!("Failed to initalize device-specific interfaces: {e}");
     }
 
@@ -2165,7 +2168,6 @@ mod test {
             fan_control: Some(ServiceConfig::Systemd(String::from(
                 "jupiter-fan-control.service",
             ))),
-            firmware_debug: Some(ServiceConfig::Systemd(String::from("ec-log.service"))),
         })
     }
 
@@ -2214,6 +2216,7 @@ mod test {
             }),
             inputplumber: None,
             cec_hw: None,
+            firmware_debug: Some(ServiceConfig::Systemd(String::from("ec-log.service"))),
         })
     }
 

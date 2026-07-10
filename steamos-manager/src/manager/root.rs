@@ -218,7 +218,7 @@ impl SteamOSManager {
 
     #[zbus(property)]
     async fn ec_logging(&self) -> fdo::Result<u32> {
-        let config = platform_config().await.map_err(to_zbus_fdo_error)?;
+        let config = device_config().await.map_err(to_zbus_fdo_error)?;
         match config
             .as_ref()
             .and_then(|config| config.firmware_debug.as_ref())
@@ -241,7 +241,7 @@ impl SteamOSManager {
                 if res < 0 {
                     return Err(fdo::Error::Failed(String::from("Script exited abnormally")));
                 }
-                Ok((res < 0) as u32)
+                Ok((res > 0) as u32)
             }
             None => Err(fdo::Error::Failed(String::from(
                 "Firmware debug not configured",
@@ -261,7 +261,7 @@ impl SteamOSManager {
             _ => return Err(fdo::Error::InvalidArgs(String::from("Invalid value")).into()),
         };
 
-        let config = platform_config().await.map_err(to_zbus_error)?;
+        let config = device_config().await.map_err(to_zbus_error)?;
         match config
             .as_ref()
             .and_then(|config| config.firmware_debug.as_ref())

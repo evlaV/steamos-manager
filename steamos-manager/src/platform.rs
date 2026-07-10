@@ -35,7 +35,6 @@ pub(crate) struct PlatformConfig {
     pub update_dock: Option<ScriptConfig>,
     pub storage: Option<StorageConfig>,
     pub fan_control: Option<ServiceConfig>,
-    pub firmware_debug: Option<ServiceConfig>,
 }
 
 #[derive(Clone, Default, Deserialize, Debug)]
