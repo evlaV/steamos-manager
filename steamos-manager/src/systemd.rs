@@ -22,6 +22,8 @@ pub(crate) trait SystemdUnit {
     fn active_state(&self) -> zbus::Result<String>;
     #[zbus(property)]
     fn unit_file_state(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn load_state(&self) -> zbus::Result<String>;
 
     async fn restart(&self, mode: &str) -> zbus::Result<OwnedObjectPath>;
     async fn start(&self, mode: &str) -> zbus::Result<OwnedObjectPath>;
@@ -64,6 +66,7 @@ trait SystemdManager {
 
     async fn reload(&self) -> zbus::Result<()>;
 
+    async fn load_unit(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
     async fn get_unit(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
 
     #[zbus(signal)]
@@ -150,16 +153,20 @@ pub async fn daemon_reload(connection: &Connection) -> Result<()> {
 impl<'dbus> SystemdUnit<'dbus> {
     pub async fn exists(connection: &Connection, name: &str) -> Result<bool> {
         let manager = SystemdManagerProxy::new(connection).await?;
-        // This is kinda hacky, but zbus makes it pretty hard to get the proper error name
-        let expected_error = format!("Unit {name} not loaded.");
-        match manager.get_unit(name).await {
-            Ok(_) => Ok(true),
+        match manager.load_unit(name).await {
+            Ok(path) => {
+                let unit = SystemdUnitProxy::builder(connection)
+                    .path(path)?
+                    .build()
+                    .await?;
+                let load_state = unit.load_state().await?;
+                Ok(load_state != "not-found")
+            }
             Err(zbus::Error::MethodError(name, _, _))
                 if name == "org.freedesktop.systemd1.NoSuchUnit" =>
             {
                 Ok(false)
             }
-            Err(zbus::Error::Failure(message)) if message == expected_error => Ok(false),
             Err(e) => Err(e.into()),
         }
     }
@@ -340,6 +347,11 @@ pub mod test {
         #[zbus(property)]
         fn unit_file_state(&self) -> fdo::Result<String> {
             Ok(self.unit_file.clone())
+        }
+
+        #[zbus(property)]
+        fn load_state(&self) -> fdo::Result<String> {
+            Ok(String::from("loaded"))
         }
 
         async fn restart(
@@ -535,6 +547,14 @@ pub mod test {
 
         async fn reload(&self) -> fdo::Result<()> {
             Ok(())
+        }
+
+        async fn load_unit(&mut self, unit: &str) -> fdo::Result<OwnedObjectPath> {
+            Ok(
+                ObjectPath::try_from(format!("/org/freedesktop/systemd1/unit/{}", escape(unit)))
+                    .unwrap()
+                    .into(),
+            )
         }
 
         async fn get_unit(&mut self, unit: &str) -> fdo::Result<OwnedObjectPath> {

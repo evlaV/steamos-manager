@@ -55,6 +55,26 @@ pub(crate) enum SteamDeckVariant {
 #[derive(Display, EnumString, PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
 #[strum(ascii_case_insensitive)]
 #[repr(u32)]
+pub enum ECLoggingState {
+    #[strum(
+        to_string = "disabled",
+        serialize = "off",
+        serialize = "disable",
+        serialize = "0"
+    )]
+    Disabled = 0,
+    #[strum(
+        to_string = "enabled",
+        serialize = "on",
+        serialize = "enable",
+        serialize = "1"
+    )]
+    Enabled = 1,
+}
+
+#[derive(Display, EnumString, PartialEq, Debug, Copy, Clone, TryFromPrimitive)]
+#[strum(ascii_case_insensitive)]
+#[repr(u32)]
 pub enum FanControlState {
     #[strum(to_string = "BIOS")]
     Bios = 0,
@@ -92,6 +112,7 @@ pub(crate) struct DeviceConfig {
     pub performance_profile: Option<PerformanceProfileConfig>,
     pub inputplumber: Option<InputPlumberConfig>,
     pub cec_hw: Option<HdmiCecConfig>,
+    pub firmware_debug: Option<ServiceConfig>,
 }
 
 #[derive(Clone, Default, Deserialize, Debug)]

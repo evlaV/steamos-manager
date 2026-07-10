@@ -8,3 +8,6 @@ oui = "e0-31-9e"
 
 [cec_hw.hardware.cros_ec]
 port = 0
+
+[firmware_debug]
+systemd = "ec-log.service"

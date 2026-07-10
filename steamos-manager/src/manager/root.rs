@@ -32,15 +32,16 @@ use crate::hardware::{
     steam_deck_variant,
 };
 use crate::job::JobManager;
-use crate::platform::platform_config;
+use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
     CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, TdpLimitManager,
     set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
     tdp_limit_manager,
 };
-use crate::process::{run_script, script_output};
+use crate::process::{run_script, script_exit_code, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
 use crate::sysfs::SysfsWritten;
+use crate::systemd::{JobMode, SystemdUnit};
 use crate::wifi::{
     WifiBackend, WifiDebugMode, WifiPowerManagement, extract_wifi_trace, generate_wifi_dump,
     set_wifi_backend, set_wifi_debug_mode, set_wifi_power_management_state,
@@ -120,6 +121,11 @@ pub(crate) trait RootManager {
     fn fan_control_state(&self) -> zbus::Result<u32>;
     #[zbus(property)]
     fn set_fan_control_state(&self, state: u32) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn ec_logging(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn set_ec_logging(&self, state: u32) -> zbus::Result<()>;
 
     #[zbus(property)]
     fn hdmi_cec_can_awaken(&self) -> zbus::Result<bool>;
@@ -208,6 +214,90 @@ impl SteamOSManager {
             .set_speed(rpm)
             .await
             .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn ec_logging(&self) -> fdo::Result<u32> {
+        let config = device_config().await.map_err(to_zbus_fdo_error)?;
+        match config
+            .as_ref()
+            .and_then(|config| config.firmware_debug.as_ref())
+        {
+            Some(ServiceConfig::Systemd(service)) => {
+                let systemd_service = SystemdUnit::new(&self.connection, service)
+                    .await
+                    .map_err(to_zbus_fdo_error)?;
+                let active = systemd_service.active().await.map_err(to_zbus_fdo_error)?;
+                Ok(active.is_active() as u32)
+            }
+            Some(ServiceConfig::Script {
+                start: _,
+                stop: _,
+                status,
+            }) => {
+                let res = script_exit_code(&status.script, &status.script_args)
+                    .await
+                    .map_err(to_zbus_fdo_error)?;
+                if res < 0 {
+                    return Err(fdo::Error::Failed(String::from("Script exited abnormally")));
+                }
+                Ok((res > 0) as u32)
+            }
+            None => Err(fdo::Error::Failed(String::from(
+                "Firmware debug not configured",
+            ))),
+        }
+    }
+
+    #[zbus(property)]
+    async fn set_ec_logging(
+        &self,
+        state: u32,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> zbus::Result<()> {
+        let enable: bool = state > 0;
+
+        let config = device_config().await.map_err(to_zbus_error)?;
+        match config
+            .as_ref()
+            .and_then(|config| config.firmware_debug.as_ref())
+        {
+            Some(ServiceConfig::Systemd(service)) => {
+                let systemd_service = SystemdUnit::new(&self.connection, service)
+                    .await
+                    .map_err(to_zbus_error)?;
+                if enable {
+                    systemd_service
+                        .start(JobMode::Fail)
+                        .await
+                        .map_err(to_zbus_error)?;
+                } else {
+                    systemd_service
+                        .stop(JobMode::Fail)
+                        .await
+                        .map_err(to_zbus_error)?;
+                }
+            }
+            Some(ServiceConfig::Script {
+                start,
+                stop,
+                status: _,
+            }) => match enable {
+                true => run_script(&start.script, &start.script_args)
+                    .await
+                    .map_err(to_zbus_error)?,
+                false => run_script(&stop.script, &stop.script_args)
+                    .await
+                    .map_err(to_zbus_error)?,
+            },
+            None => {
+                return Err(zbus::Error::Failure(String::from(
+                    "Firmware debug not configured",
+                )));
+            }
+        }
+
+        self.ec_logging_changed(&ctx).await
     }
 
     #[zbus(property(emits_changed_signal = "const"))]

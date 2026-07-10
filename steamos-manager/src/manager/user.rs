@@ -160,6 +160,10 @@ struct FanControl1 {
     proxy: Proxy<'static>,
 }
 
+struct FirmwareDebug1 {
+    proxy: Proxy<'static>,
+}
+
 struct GpuPerformanceLevel1 {
     proxy: Proxy<'static>,
     driver: Box<dyn GpuPerformanceLevelDriver>,
@@ -449,6 +453,24 @@ impl FanControl1 {
     ) -> zbus::Result<()> {
         let _: () = setter!(self, "FanControlState", state)?;
         self.fan_control_state_changed(&ctx).await
+    }
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.FirmwareDebug1")]
+impl FirmwareDebug1 {
+    #[zbus(property)]
+    async fn ec_logging(&self) -> fdo::Result<u32> {
+        getter!(self, "EcLogging")
+    }
+
+    #[zbus(property)]
+    async fn set_ec_logging(
+        &self,
+        state: u32,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> zbus::Result<()> {
+        let _: () = setter!(self, "EcLogging", state)?;
+        self.ec_logging_changed(&ctx).await
     }
 }
 
@@ -1745,6 +1767,7 @@ async fn create_platform_interfaces(
 async fn create_device_interfaces(
     proxy: &Proxy<'static>,
     object_server: &ObjectServer,
+    connection: &Connection,
     tdp_manager: Option<UnboundedSender<TdpManagerCommand>>,
 ) -> Result<()> {
     let Some(config) = device_config().await? else {
@@ -1754,6 +1777,9 @@ async fn create_device_interfaces(
     let performance_profile = PerformanceProfile1 {
         proxy: proxy.clone(),
         tdp_limit_manager: tdp_manager.clone(),
+    };
+    let firmware_debug = FirmwareDebug1 {
+        proxy: proxy.clone(),
     };
 
     if let Some(manager) = tdp_manager {
@@ -1791,6 +1817,16 @@ async fn create_device_interfaces(
             .is_empty()
     {
         object_server.at(MANAGER_PATH, performance_profile).await?;
+    }
+
+    if let Some(config) = config.firmware_debug.as_ref() {
+        match config.is_valid(connection, true).await {
+            Ok(true) => {
+                object_server.at(MANAGER_PATH, firmware_debug).await?;
+            }
+            Ok(false) => (),
+            Err(e) => error!("Failed to verify if firmware debug config is valid: {e}"),
+        }
     }
 
     Ok(())
@@ -1877,7 +1913,9 @@ pub(crate) async fn create_interfaces(
 
     let object_server = session.object_server();
 
-    if let Err(e) = create_device_interfaces(&proxy, object_server, tdp_manager.clone()).await {
+    if let Err(e) =
+        create_device_interfaces(&proxy, object_server, &system, tdp_manager.clone()).await
+    {
         error!("Failed to initalize device-specific interfaces: {e}");
     }
 
@@ -2039,7 +2077,8 @@ mod test {
     use crate::power::{BatteryChargeLimitMethod, TdpLimitingMethod, TdpManagerService};
     use crate::proxy::{LowPowerMode1Proxy, RemoteInterface1Proxy};
     use crate::session::{SessionManagerState, make_managed};
-    use crate::systemd::test::MockManager;
+    use crate::systemd::escape;
+    use crate::systemd::test::{MockManager, MockUnit};
     use crate::{path, testing};
 
     use anyhow::{anyhow, bail, ensure};
@@ -2177,6 +2216,7 @@ mod test {
             }),
             inputplumber: None,
             cec_hw: None,
+            firmware_debug: Some(ServiceConfig::Systemd(String::from("ec-log.service"))),
         })
     }
 
@@ -2280,6 +2320,24 @@ mod test {
             let object_server = connection.object_server();
             object_server
                 .at("/org/freedesktop/systemd1", MockManager::default())
+                .await?;
+
+            object_server
+                .at(
+                    PathBuf::from("/org/freedesktop/systemd1/unit")
+                        .join(escape("ec-log.service"))
+                        .to_string_lossy(),
+                    MockUnit::default(),
+                )
+                .await?;
+
+            object_server
+                .at(
+                    PathBuf::from("/org/freedesktop/systemd1/unit")
+                        .join(escape("jupiter-fan-control.service"))
+                        .to_string_lossy(),
+                    MockUnit::default(),
+                )
                 .await?;
         }
         sleep(Duration::from_millis(10)).await;
@@ -2512,6 +2570,24 @@ mod test {
         let test = start(TestConfig::none()).await.expect("start");
 
         assert!(test_interface_missing::<FanControl1>(&test.connection).await);
+    }
+
+    #[tokio::test]
+    async fn interface_matches_firmware_debug1() {
+        let test = start(TestConfig::all()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<FirmwareDebug1>(&test.connection)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn interface_missing_firmware_debug1() {
+        let test = start(TestConfig::none()).await.expect("start");
+
+        assert!(test_interface_missing::<FirmwareDebug1>(&test.connection).await);
     }
 
     #[tokio::test]

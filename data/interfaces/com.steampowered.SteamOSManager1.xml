@@ -161,6 +161,23 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.FirmwareDebug1
+      @short_description: Optional interface with debugging facilities for the device firmware.
+  -->
+  <interface name="com.steampowered.SteamOSManager1.FirmwareDebug1">
+
+    <!--
+        EcLogging:
+
+        Controls whether EC firmware logging is enabled.
+
+        Valid states: 0 = off, 1 = on
+    -->
+    <property name="EcLogging" type="u" access="readwrite"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.GpuPerformanceLevel1
       @short_description: Optional interface for generic GPU properties.
   -->
