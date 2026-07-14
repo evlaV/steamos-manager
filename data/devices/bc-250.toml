@@ -1,0 +1,9 @@
+[[device]]
+dmi.sys_vendor = "Default string"
+dmi.product_name = "AMD BC-250"
+device = "bc250"
+variant = "BC-250"
+friendly_name = "AMD BC-250"
+
+[gpu_performance]
+driver = "amdgpu"

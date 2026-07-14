@@ -787,6 +787,21 @@ pub mod test {
         );
     }
 
+    #[tokio::test]
+    async fn board_lookup_bc250() {
+        let _h = setup_board("Default string\n", "AMD BC-250\n", "AMD BC-250\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            steam_deck_variant().await.unwrap(),
+            SteamDeckVariant::Unknown
+        );
+        assert_eq!(
+            device_variant().await.unwrap(),
+            (String::from("bc250"), String::from("BC-250"))
+        );
+    }
+
     #[test]
     fn ec_logging_state_roundtrip() {
         enum_roundtrip!(ECLoggingState {
