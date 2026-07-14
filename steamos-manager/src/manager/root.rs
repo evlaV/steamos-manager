@@ -807,7 +807,7 @@ mod test {
     use super::*;
     use crate::daemon::channel;
     use crate::daemon::root::RootContext;
-    use crate::gpu::test::{format_clocks, read_clocks};
+    use crate::gpu::test::{Nodes as GpuNodes, format_clocks, read_clocks};
     use crate::gpu::{
         self, AmdgpuPerformanceLevel, AmdgpuPerformanceLevelDriver, GpuPerformanceLevel,
     };
@@ -834,7 +834,9 @@ mod test {
             "wifi.backend=iwd\n",
         )
         .await?;
-        gpu::test::create_nodes().await.expect("setup");
+        gpu::test::create_nodes(&GpuNodes::all())
+            .await
+            .expect("setup");
 
         let (tx, _rx) = channel::<RootContext>();
         let connection = handle.new_dbus().await?;

@@ -601,6 +601,27 @@ pub(crate) mod test {
     use crate::{enum_roundtrip, path, testing};
     use tokio::fs::{create_dir_all, read_to_string, write};
 
+    #[derive(Debug, Default, Clone)]
+    pub struct Nodes {
+        amdgpu: bool,
+        performance_level: bool,
+        power_profile: bool,
+    }
+
+    impl Nodes {
+        pub fn all() -> Nodes {
+            Nodes {
+                amdgpu: true,
+                performance_level: true,
+                power_profile: true,
+            }
+        }
+
+        pub fn none() -> Nodes {
+            Nodes::default()
+        }
+    }
+
     pub async fn setup_amdgpu() -> Result<()> {
         // Use hwmon5 just as a test. We needed a subfolder of HWMON_PREFIX
         // and this is as good as any.
@@ -648,22 +669,28 @@ pub(crate) mod test {
         Ok(())
     }
 
-    pub async fn create_nodes() -> Result<()> {
-        setup_amdgpu().await?;
-        let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
+    pub async fn create_nodes(which: &Nodes) -> Result<()> {
+        if which.amdgpu {
+            setup_amdgpu().await?;
+            let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
 
-        let filename = base.join(AmdgpuPerformanceLevelDriver::PERFORMANCE_LEVEL_SUFFIX);
-        write(filename.as_path(), "auto\n").await?;
+            if which.performance_level {
+                let filename = base.join(AmdgpuPerformanceLevelDriver::PERFORMANCE_LEVEL_SUFFIX);
+                write(filename.as_path(), "auto\n").await?;
+            }
 
-        let filename = base.join(AmdgpuPowerProfileDriver::POWER_PROFILE_SUFFIX);
-        let contents = " 1 3D_FULL_SCREEN
+            if which.power_profile {
+                let filename = base.join(AmdgpuPowerProfileDriver::POWER_PROFILE_SUFFIX);
+                let contents = " 1 3D_FULL_SCREEN
  3          VIDEO*
  4             VR
  5        COMPUTE
  6         CUSTOM
  8         CAPPED
  9       UNCAPPED";
-        write(filename.as_path(), contents).await?;
+                write(filename.as_path(), contents).await?;
+            }
+        }
 
         Ok(())
     }

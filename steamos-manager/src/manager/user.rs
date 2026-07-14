@@ -2063,6 +2063,7 @@ mod test {
     use super::*;
     use crate::daemon::channel;
     use crate::daemon::user::{UserCommand, UserContext};
+    use crate::gpu::test::Nodes as GpuNodes;
     use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
     use crate::hardware::test::fake_model;
     use crate::hardware::{
@@ -2125,6 +2126,7 @@ mod test {
         platform: Option<PlatformConfig>,
         device: Option<DeviceConfig>,
         power_nodes: PowerNodes,
+        gpu_nodes: GpuNodes,
         setup: S,
     }
 
@@ -2134,6 +2136,7 @@ mod test {
                 platform: all_platform_config(),
                 device: all_device_config(),
                 power_nodes: PowerNodes::all(),
+                gpu_nodes: GpuNodes::all(),
                 setup: NopTestSetup,
             }
         }
@@ -2143,6 +2146,7 @@ mod test {
                 platform: None,
                 device: None,
                 power_nodes: PowerNodes::none(),
+                gpu_nodes: GpuNodes::none(),
                 setup: NopTestSetup,
             }
         }
@@ -2154,6 +2158,7 @@ mod test {
                 platform: None,
                 device: None,
                 power_nodes: PowerNodes::none(),
+                gpu_nodes: GpuNodes::none(),
                 setup,
             }
         }
@@ -2352,7 +2357,7 @@ mod test {
             .test
             .set_process_cb(|_, _| Ok((0, String::from("Interface wlan0"))))
             .await;
-        crate::gpu::test::create_nodes().await?;
+        crate::gpu::test::create_nodes(&config.gpu_nodes).await?;
         crate::power::test::create_nodes(&config.power_nodes).await?;
 
         config.setup.setup(&handle, &connection).await?;
