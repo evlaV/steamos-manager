@@ -205,6 +205,8 @@ pub async fn daemon() -> Result<()> {
         }
     };
 
+    let mut daemon = Daemon::new(session.clone(), rx).await?;
+
     let (jm_tx, jm_rx) = unbounded_channel();
     let job_manager = JobManager::new(session.clone()).await?;
     let jm_service = JobManagerService::new(job_manager, jm_rx, system.clone());
@@ -216,16 +218,15 @@ pub async fn daemon() -> Result<()> {
     } else {
         None
     };
+    daemon.add_service(jm_service);
+    if let Ok(tdp_service) = tdp_service {
+        daemon.add_service(tdp_service);
+    } else if let Err(e) = tdp_service {
+        info!("TdpManagerService not available: {e}");
+    }
 
     let services =
         create_interfaces(session.clone(), system.clone(), tx.clone(), jm_tx, tdp_tx).await?;
-
-    let mut daemon = Daemon::new(session.clone(), rx).await?;
-    let context = UserContext {
-        session,
-        state: UserState::default(),
-        channel: tx,
-    };
 
     daemon.add_service(services.signal_relay);
     if let Some(service) = services.screenreader_setup {
@@ -234,16 +235,15 @@ pub async fn daemon() -> Result<()> {
     if let Some(service) = services.session_manager {
         daemon.add_service(service);
     }
-    daemon.add_service(jm_service);
-    if let Ok(tdp_service) = tdp_service {
-        daemon.add_service(tdp_service);
-    } else if let Err(e) = tdp_service {
-        info!("TdpManagerService not available: {e}");
-    }
     if let Some(service) = services.cecd {
         daemon.add_service(service);
     }
 
+    let context = UserContext {
+        session,
+        state: UserState::default(),
+        channel: tx,
+    };
     daemon.run(context).await
 }
 
