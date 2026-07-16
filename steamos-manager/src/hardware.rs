@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 use linux_cec::VendorId;
 use num_enum::TryFromPrimitive;
 use serde::Deserialize;
@@ -102,17 +102,17 @@ pub(crate) enum InputPlumberTargetDevice {
 
 #[derive(Clone, Default, Deserialize, Debug)]
 #[serde(default)]
-pub(crate) struct DeviceConfig {
-    pub device: Vec<DeviceMatch>,
-    pub tdp_limit: Option<TdpLimitConfig>,
-    pub fan_speed: Option<FanSpeedConfig>,
-    pub gpu_performance: Option<GpuPerformanceConfig>,
-    pub gpu_power_profile: Option<GpuPowerProfileConfig>,
-    pub battery_charge_limit: Option<BatteryChargeLimitConfig>,
-    pub performance_profile: Option<PerformanceProfileConfig>,
-    pub inputplumber: Option<InputPlumberConfig>,
-    pub cec_hw: Option<HdmiCecConfig>,
-    pub firmware_debug: Option<ServiceConfig>,
+pub struct DeviceConfig {
+    pub(crate) device: Vec<DeviceMatch>,
+    pub(crate) tdp_limit: Option<TdpLimitConfig>,
+    pub(crate) fan_speed: Option<FanSpeedConfig>,
+    pub(crate) gpu_performance: Option<GpuPerformanceConfig>,
+    pub(crate) gpu_power_profile: Option<GpuPowerProfileConfig>,
+    pub(crate) battery_charge_limit: Option<BatteryChargeLimitConfig>,
+    pub(crate) performance_profile: Option<PerformanceProfileConfig>,
+    pub(crate) inputplumber: Option<InputPlumberConfig>,
+    pub(crate) cec_hw: Option<HdmiCecConfig>,
+    pub(crate) firmware_debug: Option<ServiceConfig>,
 }
 
 #[derive(Clone, Default, Deserialize, Debug)]
@@ -252,17 +252,10 @@ impl DeviceConfig {
             } else {
                 continue;
             }
-            let config = match read_to_string(&path).await {
+            let config = match DeviceConfig::read_from_path(&path).await {
                 Ok(config) => config,
                 Err(e) => {
                     error!("Failed to read config file {}: {e}", path.display());
-                    continue;
-                }
-            };
-            let config: DeviceConfig = match toml::from_str(config.as_ref()) {
-                Ok(config) => config,
-                Err(e) => {
-                    error!("Failed to parse config file {}: {e}", path.display());
                     continue;
                 }
             };
@@ -271,6 +264,34 @@ impl DeviceConfig {
             }
         }
         Ok(None)
+    }
+
+    async fn read_from_path(path: impl AsRef<Path>) -> Result<DeviceConfig> {
+        let config = read_to_string(&path).await?;
+        Ok(toml::from_str(config.as_ref())?)
+    }
+
+    pub async fn load_from_path(path: impl AsRef<Path>) -> Result<()> {
+        let config = DeviceConfig::read_from_path(&path).await.inspect_err(|e| {
+            error!(
+                "Failed to read config file {}: {e}",
+                path.as_ref().display()
+            )
+        })?;
+        #[cfg(not(test))]
+        DEVICE_CONFIG
+            .set(Some(config))
+            .map_err(|_| anyhow!("Device config already configured"))?;
+        #[cfg(test)]
+        {
+            let test = crate::testing::current();
+            let mut device_config = test.device_config.lock().await;
+            if device_config.is_some() {
+                return Err(anyhow!("Device config already configured"));
+            }
+            *device_config = Some(config);
+        }
+        Ok(())
     }
 }
 
