@@ -364,8 +364,11 @@ async fn set_nm_settings(
         backend_unit.disable().await?;
         backend_unit.stop(JobMode::Fail).await?.wait().await?;
 
-        ensure_default_interface().await?;
+        // Restart NetworkManager even if this fails, otherwise the system is
+        // left with no networking at all
+        let res = ensure_default_interface().await;
         unit.start(JobMode::Fail).await?;
+        res?;
     } else {
         unit.reload(JobMode::Fail).await?.wait().await?;
     }
@@ -825,6 +828,72 @@ mod test {
         .await
         .unwrap();
 
+        assert_eq!(network_manager.get().await.active, "active");
+    }
+
+    #[tokio::test]
+    async fn test_set_nm_settings_restart_create_interface_fails() {
+        let mut h = testing::start();
+
+        let mut iwd = MockUnit::default();
+        iwd.active = String::from("active");
+        iwd.unit_file = String::from("enabled");
+
+        let connection = h.new_dbus().await.expect("dbus");
+        connection
+            .request_name("org.freedesktop.systemd1")
+            .await
+            .expect("request_name");
+        let object_server = connection.object_server();
+        object_server
+            .at("/org/freedesktop/systemd1", MockManager::default())
+            .await
+            .expect("at");
+        object_server
+            .at(
+                "/org/freedesktop/systemd1/unit/NetworkManager_2eservice",
+                MockUnit::default(),
+            )
+            .await
+            .expect("at");
+        let network_manager = object_server
+            .interface::<_, MockUnit>("/org/freedesktop/systemd1/unit/NetworkManager_2eservice")
+            .await
+            .unwrap();
+        object_server
+            .at("/org/freedesktop/systemd1/unit/iwd_2eservice", iwd)
+            .await
+            .expect("at");
+
+        fn process_output(executable: &OsStr, args: &[&OsStr]) -> Result<(i32, String)> {
+            ensure!(executable.to_string_lossy() == "/usr/bin/iw", "Not iw");
+            match args[0].to_str() {
+                Some("dev") if args.len() == 1 => Ok((0, String::new())),
+                Some("phy") if args.len() == 1 => Ok((0, String::from("Wiphy phy0"))),
+                Some("phy") => Ok((1, String::new())),
+                _ => bail!("Unknown query"),
+            }
+        }
+        h.test.set_process_cb(process_output).await;
+
+        create_dir_all(path(WIFI_BACKEND_PATHS.last().unwrap()))
+            .await
+            .expect("create_dir_all");
+
+        assert!(
+            set_nm_settings(
+                NmWifiSettings {
+                    backend: WifiBackend::WPASupplicant,
+                    powersave: NmSettingWirelessPowersave::Disable,
+                },
+                true,
+                &connection,
+            )
+            .await
+            .is_err()
+        );
+
+        // NetworkManager should still be brought back up
         assert_eq!(network_manager.get().await.active, "active");
     }
 
