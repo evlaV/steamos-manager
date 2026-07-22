@@ -40,3 +40,4 @@ cpufreq = [
   { policy = 5, max = 2035200 },
   { policy = 7, max = 2035200 },
 ]
+gpufreq_limit = 629

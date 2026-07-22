@@ -186,6 +186,7 @@ pub(crate) struct PerformanceProfileConfig {
 pub(crate) struct CustomPerformanceProfile {
     pub name: String,
     pub cpufreq: Vec<CpufreqRange>,
+    pub gpufreq_limit: Option<u32>,
 }
 
 #[derive(Clone, Deserialize, Debug)]

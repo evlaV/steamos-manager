@@ -138,6 +138,7 @@ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
     sysfs_path: PathBuf,
     available_freqs: Vec<u32>,
     level: DevfreqPerformanceLevel,
+    manual_clocks: Option<u32>,
 }
 
 #[async_trait]
@@ -157,7 +158,9 @@ pub(crate) trait GpuPerformanceLevelDriver: Send + Sync {
 
     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>>;
     async fn get_clocks(&self) -> Result<u32>;
-    async fn set_clocks(&self, clocks: u32) -> Result<()>;
+    async fn set_clocks_auto_with_limit(&mut self, limit: u32) -> Result<()>;
+    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()>;
+    async fn set_clocks(&mut self, clocks: u32) -> Result<()>;
 }
 
 pub(crate) async fn gpu_power_profile_driver() -> Result<Box<dyn GpuPowerProfileDriver>> {
@@ -390,7 +393,17 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
         Ok(min..=max)
     }
 
-    async fn set_clocks(&self, clocks: u32) -> Result<()> {
+    async fn set_clocks_auto_with_limit(&mut self, _limit: u32) -> Result<()> {
+        // Not supported - do nothing.
+        Ok(())
+    }
+
+    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()> {
+        // Not supported - do nothing.
+        Ok(())
+    }
+
+    async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
         // Set GPU clocks to given value valid
         // Only used when GPU Performance Level is manual, but write whenever called.
         let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
@@ -608,7 +621,17 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
         self.read_freq(self.config.min_freq).await
     }
 
-    async fn set_clocks(&self, clocks: u32) -> Result<()> {
+    async fn set_clocks_auto_with_limit(&mut self, _limit: u32) -> Result<()> {
+        // Not supported - do nothing.
+        Ok(())
+    }
+
+    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()> {
+        // Not supported - do nothing.
+        Ok(())
+    }
+
+    async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
         let current_level = self.get_performance_level().await?;
 
         if current_level == GpuPerformanceLevel::Intel(IntelPerformanceLevel::Auto) {
@@ -638,6 +661,7 @@ impl DevfreqGpuPerformanceLevelDriver {
                 .sorted()
                 .collect(),
             level: DevfreqPerformanceLevel::Auto,
+            manual_clocks: None,
         })
     }
 
@@ -682,8 +706,11 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
             bail!("This is not an devfreq-compatible performance level");
         };
 
+        self.level = level;
+
         match level {
             DevfreqPerformanceLevel::Auto => {
+                self.manual_clocks = None;
                 self.write_value(DEVFREQ_MINIMUM_FREQ, &self.min_freq().to_string())
                     .await?;
                 self.write_value(DEVFREQ_MAXIMUM_FREQ, &self.max_freq().to_string())
@@ -694,8 +721,6 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
                 self.set_clocks(mean / 1_000_000u32).await?;
             }
         }
-
-        self.level = level;
 
         Ok(())
     }
@@ -713,7 +738,32 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
         Ok(current_freq.trim().parse::<u32>()? / 1_000_000u32)
     }
 
-    async fn set_clocks(&self, clocks: u32) -> Result<()> {
+    async fn set_clocks_auto_with_limit(&mut self, limit: u32) -> Result<()> {
+        let out_min = self.min_freq();
+        let out_max = limit * 1_000_000u32;
+        self.level = DevfreqPerformanceLevel::Auto;
+        self.write_value(DEVFREQ_MINIMUM_FREQ, &out_min.to_string())
+            .await?;
+        self.write_value(DEVFREQ_MAXIMUM_FREQ, &out_max.to_string())
+            .await?;
+
+        Ok(())
+    }
+
+    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()> {
+        if let Some(clocks) = self.manual_clocks {
+            self.level = DevfreqPerformanceLevel::Manual;
+            self.set_clocks(clocks).await?;
+        } else {
+            self.set_performance_level(GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto))
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
+        self.manual_clocks = Some(clocks);
         if self.level == DevfreqPerformanceLevel::Auto {
             return Ok(());
         }
@@ -995,7 +1045,7 @@ CCLK_RANGE in Core0:
     #[tokio::test]
     async fn test_set_amdgpu_gpu_clocks() {
         let _h = testing::start();
-        let driver = AmdgpuPerformanceLevelDriver {};
+        let mut driver = AmdgpuPerformanceLevelDriver {};
 
         assert!(driver.set_clocks(1600).await.is_err());
         setup_amdgpu().await.expect("setup_amdgpu");

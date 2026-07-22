@@ -9,10 +9,11 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::spawn;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot;
+use tokio::sync::{Mutex, oneshot};
 use tracing::{debug, error, info};
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
@@ -65,7 +66,7 @@ pub struct SteamOSManager {
     fan_control: FanControl,
     tdp_limit_manager: Option<Box<dyn TdpLimitManager>>,
     platform_profile: Option<Box<dyn PlatformProfileDriver>>,
-    gpu_performance_level: Option<Box<dyn GpuPerformanceLevelDriver>>,
+    gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
     gpu_power_profile: Option<Box<dyn GpuPowerProfileDriver>>,
     // Whether we should use trace-cmd or not.
     // True on galileo devices, false otherwise
@@ -77,6 +78,12 @@ pub struct SteamOSManager {
 
 impl SteamOSManager {
     pub async fn new(connection: Connection, channel: Sender<Command>) -> Result<Self> {
+        let gpu_performance_level = gpu_performance_level_driver()
+            .await
+            .inspect_err(|e| info!("Could not set up GPU performance management: {e}"))
+            .ok()
+            .map(|driver| Arc::new(Mutex::new(driver)));
+
         Ok(SteamOSManager {
             fan_control: FanControl::new(connection.clone()),
             wifi_debug_mode: WifiDebugMode::Off,
@@ -84,17 +91,14 @@ impl SteamOSManager {
                 .await
                 .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
                 .ok(),
-            platform_profile: platform_profile_driver()
-                .await
-                .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
-                .ok(),
-            gpu_performance_level: gpu_performance_level_driver()
-                .await
-                .inspect_err(|e| info!("Could not set up GPU performance management: {e}"))
-                .ok(),
+            gpu_performance_level: gpu_performance_level.clone(),
             gpu_power_profile: gpu_power_profile_driver()
                 .await
                 .inspect_err(|e| info!("Could not set up GPU power profile management: {e}"))
+                .ok(),
+            platform_profile: platform_profile_driver(gpu_performance_level.clone())
+                .await
+                .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
                 .ok(),
             should_trace: steam_deck_variant().await.unwrap_or_default()
                 == SteamDeckVariant::Galileo,
@@ -509,11 +513,12 @@ impl SteamOSManager {
             debug!("SetGpuPerformanceLevel: discarding out of order serial");
             return Ok(());
         }
-        let Some(ref mut driver) = self.gpu_performance_level else {
+        let Some(driver) = &self.gpu_performance_level else {
             return Err(fdo::Error::Failed(String::from(
                 "GPU performance settings not configured",
             )));
         };
+        let mut driver = driver.lock().await;
         let level = match driver.performance_level_from_str(level) {
             Ok(level) => level,
             Err(e) => return Err(to_zbus_fdo_error(e)),
@@ -534,11 +539,12 @@ impl SteamOSManager {
             debug!("SetManualGpuClock: discarding out of order serial");
             return Ok(());
         }
-        let Some(ref driver) = self.gpu_performance_level else {
+        let Some(driver) = &self.gpu_performance_level else {
             return Err(fdo::Error::Failed(String::from(
                 "GPU performance settings not configured",
             )));
         };
+        let mut driver = driver.lock().await;
         driver
             .set_clocks(clocks)
             .await

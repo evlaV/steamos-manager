@@ -17,12 +17,13 @@ use std::ops::RangeInclusive;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use strum::{Display, EnumIter, EnumString, VariantNames};
 use tokio::fs::{self, File, read_dir, read_to_string, try_exists};
 use tokio::io::{AsyncWriteExt, ErrorKind, Interest};
 use tokio::net::unix::pipe;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
+use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 use zbus::names::OwnedBusName;
@@ -30,7 +31,7 @@ use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, ObjectServer, fdo};
 
 use crate::error::{to_zbus_error, to_zbus_fdo_error};
-use crate::gpu::AMDGPU_HWMON_NAME;
+use crate::gpu::{AMDGPU_HWMON_NAME, GpuPerformanceLevelDriver};
 use crate::hardware::{CpufreqRange, CustomPerformanceProfile, FanControlState, device_config};
 use crate::manager::MANAGER_PATH;
 use crate::manager::root::RootManagerProxy;
@@ -126,7 +127,9 @@ pub enum CPUBoostState {
     Enabled = 1,
 }
 
-pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>> {
+pub(crate) async fn platform_profile_driver(
+    gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
+) -> Result<Box<dyn PlatformProfileDriver>> {
     let config = device_config().await?;
     let config = config
         .as_ref()
@@ -146,8 +149,12 @@ pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileD
         PlatformProfileDriverType::Custom => {
             if let Some(ref profile) = config.custom_profile {
                 Ok(Box::new(
-                    CustomPlatformProfileDriver::new(profile, Some(&config.suggested_default))
-                        .await?,
+                    CustomPlatformProfileDriver::new(
+                        profile,
+                        Some(&config.suggested_default),
+                        gpu_performance_level,
+                    )
+                    .await?,
                 ))
             } else {
                 Err(anyhow!("No custom profiles configured"))
@@ -549,7 +556,7 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
         let Some(ref performance_profile) = self.performance_profile else {
             return Ok(true);
         };
-        if let Ok(driver) = platform_profile_driver().await {
+        if let Ok(driver) = platform_profile_driver(None).await {
             Ok(driver.get_platform_profile().await? == *performance_profile)
         } else {
             Ok(true)
@@ -648,7 +655,7 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
         let Some(ref performance_profile) = self.performance_profile else {
             return Ok(true);
         };
-        if let Ok(driver) = platform_profile_driver().await {
+        if let Ok(driver) = platform_profile_driver(None).await {
             Ok(driver.get_platform_profile().await? == *performance_profile)
         } else {
             Ok(true)
@@ -788,10 +795,10 @@ pub(crate) struct AcpiPlatformProfileDriver {
     path: PathBuf,
 }
 
-#[derive(Debug)]
 pub(crate) struct CustomPlatformProfileDriver {
     profiles: Vec<CustomPerformanceProfile>,
     current_profile: Option<String>,
+    gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
 }
 
 #[async_trait]
@@ -839,10 +846,15 @@ impl PlatformProfileDriver for AcpiPlatformProfileDriver {
 }
 
 impl CustomPlatformProfileDriver {
-    async fn new(profiles: &[CustomPerformanceProfile], current: Option<&String>) -> Result<Self> {
+    async fn new(
+        profiles: &[CustomPerformanceProfile],
+        current: Option<&String>,
+        gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
+    ) -> Result<Self> {
         Ok(Self {
             profiles: profiles.to_owned(),
             current_profile: current.cloned(),
+            gpu_performance_level,
         })
     }
 }
@@ -866,6 +878,16 @@ impl PlatformProfileDriver for CustomPlatformProfileDriver {
             for cpufreq in &profile.cpufreq {
                 write_cpu_freq_sysfs_contents(cpufreq).await?
             }
+
+            if let Some(driver) = &self.gpu_performance_level {
+                let mut driver = driver.lock().await;
+                if let Some(gpufreq_limit) = &profile.gpufreq_limit {
+                    driver.set_clocks_auto_with_limit(*gpufreq_limit).await?;
+                } else {
+                    driver.unset_clocks_auto_with_limit().await?;
+                }
+            }
+
             self.current_profile = Some(profile.name.clone());
             Ok(())
         } else {
