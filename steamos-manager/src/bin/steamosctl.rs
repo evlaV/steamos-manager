@@ -18,10 +18,10 @@ use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
     AmbientLightSensor1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy, CpuScaling1Proxy,
     CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy, FirmwareDebug1Proxy,
-    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, LowPowerMode1Proxy,
-    Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy, SessionManagement1Proxy,
-    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy, WifiBackend1Proxy,
-    WifiDebug1Proxy, WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
+    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, HdmiCec2Proxy,
+    LowPowerMode1Proxy, Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy,
+    SessionManagement1Proxy, Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
+    WifiBackend1Proxy, WifiDebug1Proxy, WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
 };
 use steamos_manager::screenreader::{ScreenReaderAction, ScreenReaderMode};
 use steamos_manager::session::LoginMode;
@@ -209,6 +209,57 @@ enum Commands {
         /// Valid modes are `disabled`, `control-only`, `control-and-wake`
         state: HdmiCecState,
     },
+
+    /// Get the state of HDMI-CEC remote control passthrough
+    GetHdmiCecControl,
+
+    /// Set the state of HDMI-CEC remote control passthrough
+    SetHdmiCecControl {
+        #[arg(action = ArgAction::Set, required = true)]
+        enabled: bool,
+    },
+
+    /// Get if the device should suspend the TV via HDMI-CEC
+    GetHdmiCecSuspendTv,
+
+    /// Set if the device should suspend the TV via HDMI-CEC
+    SetHdmiCecSuspendTv {
+        #[arg(action = ArgAction::Set, required = true)]
+        enabled: bool,
+    },
+
+    /// Get if the TV should suspend the device via HDMI-CEC
+    GetHdmiCecSuspendDevice,
+
+    /// Set if the TV should suspend the device via HDMI-CEC
+    SetHdmiCecSuspendDevice {
+        #[arg(action = ArgAction::Set, required = true)]
+        enabled: bool,
+    },
+
+    /// Get if the device should wake the TV via HDMI-CEC
+    GetHdmiCecWakeTv,
+
+    /// Set if the device should wake the TV via HDMI-CEC
+    SetHdmiCecWakeTv {
+        #[arg(action = ArgAction::Set, required = true)]
+        enabled: bool,
+    },
+
+    /// Get if the TV should wake the device via HDMI-CEC
+    GetHdmiCecWakeDevice,
+
+    /// Set if the TV should wake the device via HDMI-CEC
+    SetHdmiCecWakeDevice {
+        #[arg(action = ArgAction::Set, required = true)]
+        enabled: bool,
+    },
+
+    /// Get if waking this device via HDMI-CEC is supported
+    HdmiCecWakeDeviceSupported,
+
+    /// Make the device the currently active one via HDMI-CEC
+    HdmiCecMakeActive,
 
     /// List active low power download mode handles
     ListLowPowerDownloadModeHandles,
@@ -673,6 +724,60 @@ async fn main() -> Result<()> {
                 Ok(s) => println!("HDMI-CEC state: {}", s.to_human_readable()),
                 Err(_) => println!("Got unknown value {state} from backend"),
             }
+        }
+        Commands::GetHdmiCecControl => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            let state = proxy.enable_control().await?;
+            println!("HDMI-CEC remote control enabled: {state}");
+        }
+        Commands::SetHdmiCecControl { enabled } => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            proxy.set_enable_control(enabled).await?;
+        }
+        Commands::GetHdmiCecSuspendTv => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            let state = proxy.suspend_tv().await?;
+            println!("HDMI-CEC susped TV enabled: {state}");
+        }
+        Commands::SetHdmiCecSuspendTv { enabled } => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            proxy.set_suspend_tv(enabled).await?;
+        }
+        Commands::GetHdmiCecSuspendDevice => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            let state = proxy.suspend_device().await?;
+            println!("HDMI-CEC suspend device enabled: {state}");
+        }
+        Commands::SetHdmiCecSuspendDevice { enabled } => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            proxy.set_suspend_device(enabled).await?;
+        }
+        Commands::GetHdmiCecWakeTv => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            let state = proxy.wake_tv().await?;
+            println!("HDMI-CEC wake TV enabled: {state}");
+        }
+        Commands::SetHdmiCecWakeTv { enabled } => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            proxy.set_wake_tv(enabled).await?;
+        }
+        Commands::GetHdmiCecWakeDevice => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            let state = proxy.wake_device().await?;
+            println!("HDMI-CEC wake device enabled: {state}");
+        }
+        Commands::SetHdmiCecWakeDevice { enabled } => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            proxy.set_wake_device(enabled).await?;
+        }
+        Commands::HdmiCecWakeDeviceSupported => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            let state = proxy.wake_device_supported().await?;
+            println!("HDMI-CEC wake device supported: {state}");
+        }
+        Commands::HdmiCecMakeActive => {
+            let proxy = HdmiCec2Proxy::new(&conn).await?;
+            proxy.make_active().await?;
         }
         Commands::ListLowPowerDownloadModeHandles => {
             let proxy = LowPowerMode1Proxy::new(&conn).await?;
