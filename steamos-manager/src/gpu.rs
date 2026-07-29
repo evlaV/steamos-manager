@@ -763,10 +763,10 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
-        self.manual_clocks = Some(clocks);
         if self.level == DevfreqPerformanceLevel::Auto {
             return Ok(());
         }
+        self.manual_clocks = Some(clocks);
 
         let cur = self.get_clocks().await?;
         let out = clocks * 1_000_000u32;
