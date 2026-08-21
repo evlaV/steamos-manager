@@ -139,6 +139,7 @@ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
     available_freqs: Vec<u32>,
     level: DevfreqPerformanceLevel,
     manual_clocks: Option<u32>,
+    minfreq: Option<u32>,
 }
 
 #[async_trait]
@@ -192,7 +193,7 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
                 .sysfs_path
                 .as_ref()
                 .expect("devfreq gpu performance driver needs a sysfs_path");
-            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into()).await?)
+            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into(), config.minfreq).await?)
         }
     })
 }
@@ -646,7 +647,7 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
 }
 
 impl DevfreqGpuPerformanceLevelDriver {
-    pub async fn new(path: PathBuf) -> Result<Self> {
+    pub async fn new(path: PathBuf, minfreq: Option<u32>) -> Result<Self> {
         let available_freqs = fs::read_to_string(path.join(DEVFREQ_AVAILABLE_FREQ))
             .await
             .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
@@ -662,6 +663,7 @@ impl DevfreqGpuPerformanceLevelDriver {
                 .collect(),
             level: DevfreqPerformanceLevel::Auto,
             manual_clocks: None,
+            minfreq,
         })
     }
 
@@ -726,8 +728,10 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>> {
-        Ok(*self.available_freqs.first().unwrap_or(&0) / 1_000_000u32
-            ..=*self.available_freqs.last().unwrap_or(&0) / 1_000_000u32)
+        let min = self.available_freqs.first().copied().unwrap_or(0) / 1_000_000u32;
+        let max = self.available_freqs.last().copied().unwrap_or(0) / 1_000_000u32;
+        let min = self.minfreq.map_or(min, |cap| min.max(cap));
+        Ok(min..=max)
     }
 
     async fn get_clocks(&self) -> Result<u32> {
@@ -1682,5 +1686,20 @@ CCLK_RANGE in Core0:
         .expect("parse max_freq");
         assert_eq!(min_freq, 800);
         assert_eq!(max_freq, 800);
+    }
+
+    #[tokio::test]
+    async fn devfreq_driver_respects_minfreq_cap() {
+        let driver = DevfreqGpuPerformanceLevelDriver {
+            sysfs_path: PathBuf::from("/sys/devices/test/gpu"),
+            available_freqs: vec![100_000_000, 200_000_000, 500_000_000],
+            level: DevfreqPerformanceLevel::Auto,
+            manual_clocks: None,
+            minfreq: Some(400),
+        };
+
+        let range = driver.get_clocks_range().await.expect("range");
+        assert_eq!(range.start(), &400);
+        assert_eq!(range.end(), &500);
     }
 }

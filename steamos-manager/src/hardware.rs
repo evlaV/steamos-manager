@@ -153,6 +153,7 @@ pub(crate) struct FirmwareAttributeConfig {
 pub(crate) struct GpuPerformanceConfig {
     pub driver: GpuPerformanceLevelDriverType,
     pub clocks: Option<RangeConfig<u32>>,
+    pub minfreq: Option<u32>,
     pub sysfs_path: Option<String>,
 }
 

@@ -9,6 +9,7 @@ oui = "e0-31-9e"
 [gpu_performance]
 driver = "devfreq"
 sysfs_path = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+minfreq = 500
 
 [performance_profile]
 platform_profile_driver = "custom"

@@ -2200,6 +2200,7 @@ mod test {
             gpu_performance: Some(GpuPerformanceConfig {
                 driver: GpuPerformanceLevelDriverType::Amdgpu,
                 clocks: Some(RangeConfig::new(200, 1600)),
+                minfreq: None,
                 sysfs_path: None,
             }),
             gpu_power_profile: Some(GpuPowerProfileConfig {
