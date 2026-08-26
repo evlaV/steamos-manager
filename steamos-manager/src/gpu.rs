@@ -139,7 +139,7 @@ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
     available_freqs: Vec<u32>,
     level: DevfreqPerformanceLevel,
     manual_clocks: Option<u32>,
-    minfreq: Option<u32>,
+    min_freq: Option<u32>,
 }
 
 #[async_trait]
@@ -193,7 +193,7 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
                 .sysfs_path
                 .as_ref()
                 .expect("devfreq gpu performance driver needs a sysfs_path");
-            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into(), config.minfreq).await?)
+            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into(), config.min_freq).await?)
         }
     })
 }
@@ -647,7 +647,7 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
 }
 
 impl DevfreqGpuPerformanceLevelDriver {
-    pub async fn new(path: PathBuf, minfreq: Option<u32>) -> Result<Self> {
+    pub async fn new(path: PathBuf, min_freq: Option<u32>) -> Result<Self> {
         let available_freqs = fs::read_to_string(path.join(DEVFREQ_AVAILABLE_FREQ))
             .await
             .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
@@ -663,7 +663,7 @@ impl DevfreqGpuPerformanceLevelDriver {
                 .collect(),
             level: DevfreqPerformanceLevel::Auto,
             manual_clocks: None,
-            minfreq,
+            min_freq,
         })
     }
 
@@ -730,7 +730,7 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>> {
         let min = self.available_freqs.first().copied().unwrap_or(0) / 1_000_000u32;
         let max = self.available_freqs.last().copied().unwrap_or(0) / 1_000_000u32;
-        let min = self.minfreq.map_or(min, |cap| min.max(cap));
+        let min = self.min_freq.map_or(min, |cap| min.max(cap));
         Ok(min..=max)
     }
 
@@ -1695,7 +1695,7 @@ CCLK_RANGE in Core0:
             available_freqs: vec![100_000_000, 200_000_000, 500_000_000],
             level: DevfreqPerformanceLevel::Auto,
             manual_clocks: None,
-            minfreq: Some(400),
+            min_freq: Some(400),
         };
 
         let range = driver.get_clocks_range().await.expect("range");
