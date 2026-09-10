@@ -25,8 +25,8 @@ use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, TdpLimitingMethod,
-    find_hwmon,
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, PlatformProfileDriverType,
+    TdpLimitingMethod, find_hwmon,
 };
 use crate::process::{run_script, script_exit_code};
 use crate::systemd::{JobMode, SystemdUnit};
@@ -35,8 +35,11 @@ use crate::write_synced;
 #[cfg(not(test))]
 static DEVICE_CONFIG: OnceCell<Option<DeviceConfig>> = OnceCell::const_new();
 
+#[allow(unused)]
 const SYS_VENDOR_PATH: &str = "/sys/class/dmi/id/sys_vendor";
+#[allow(unused)]
 const BOARD_NAME_PATH: &str = "/sys/class/dmi/id/board_name";
+#[allow(unused)]
 const PRODUCT_NAME_PATH: &str = "/sys/class/dmi/id/product_name";
 #[cfg(not(test))]
 const DEVICE_CONFIG_PATH: &str = "/usr/share/steamos-manager/devices";
@@ -122,6 +125,7 @@ pub(crate) struct BatteryChargeLimitConfig {
     pub method: BatteryChargeLimitMethod,
 }
 
+#[allow(unused)]
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct DeviceMatch {
     pub dmi: Option<DmiMatch>,
@@ -131,6 +135,7 @@ pub(crate) struct DeviceMatch {
     pub oui: Option<VendorId>,
 }
 
+#[allow(unused)]
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct DmiMatch {
     pub sys_vendor: String,
@@ -148,6 +153,8 @@ pub(crate) struct FirmwareAttributeConfig {
 pub(crate) struct GpuPerformanceConfig {
     pub driver: GpuPerformanceLevelDriverType,
     pub clocks: Option<RangeConfig<u32>>,
+    pub min_freq: Option<u32>,
+    pub sysfs_path: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -170,7 +177,24 @@ pub(crate) struct InputPlumberConfig {
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct PerformanceProfileConfig {
     pub suggested_default: String,
-    pub platform_profile_name: String,
+    pub platform_profile_name: Option<String>,
+    #[serde(default)]
+    pub platform_profile_driver: PlatformProfileDriverType,
+    pub custom_profile: Option<Vec<CustomPerformanceProfile>>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CustomPerformanceProfile {
+    pub name: String,
+    pub cpufreq: Vec<CpufreqRange>,
+    pub gpufreq_limit: Option<u32>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CpufreqRange {
+    pub policy: u32,
+    pub min: Option<u32>,
+    pub max: Option<u32>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -204,6 +228,7 @@ pub(crate) struct FanSpeedConfig {
     pub download_mode_fan_speed: Option<NonZeroU32>,
 }
 
+#[cfg(target_arch = "x86_64")]
 async fn try_read_to_string<S: AsRef<Path>>(path: S) -> std::io::Result<Option<String>> {
     match read_to_string(path.as_ref()).await {
         Ok(content) => Ok(Some(content)),
@@ -213,6 +238,7 @@ async fn try_read_to_string<S: AsRef<Path>>(path: S) -> std::io::Result<Option<S
 }
 
 impl DeviceConfig {
+    #[cfg(target_arch = "x86_64")]
     pub(crate) async fn device_match(&self) -> Result<Option<&'_ DeviceMatch>> {
         let Some(sys_vendor) = try_read_to_string(path(SYS_VENDOR_PATH)).await? else {
             return Ok(None);
@@ -234,6 +260,17 @@ impl DeviceConfig {
                 if product_name.is_some() && product_name == dmi.product_name.as_deref() {
                     return Ok(Some(device));
                 }
+            }
+        }
+        Ok(None)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) async fn device_match(&self) -> Result<Option<&'_ DeviceMatch>> {
+        // TODO: detect device name, variant
+        for device in &self.device {
+            if device.device == "steam_frame" {
+                return Ok(Some(device));
             }
         }
         Ok(None)
@@ -307,6 +344,7 @@ pub(crate) async fn device_config() -> Result<Option<DeviceConfig>> {
     Ok(config)
 }
 
+#[cfg(target_arch = "x86_64")]
 pub(crate) async fn steam_deck_variant() -> Result<SteamDeckVariant> {
     let Some(sys_vendor) = try_read_to_string(path(SYS_VENDOR_PATH)).await? else {
         return Ok(SteamDeckVariant::Unknown);
@@ -316,6 +354,11 @@ pub(crate) async fn steam_deck_variant() -> Result<SteamDeckVariant> {
     }
     let board_name = read_to_string(path(BOARD_NAME_PATH)).await?;
     Ok(SteamDeckVariant::from_str(board_name.trim_end()).unwrap_or_default())
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) async fn steam_deck_variant() -> Result<SteamDeckVariant> {
+    Ok(SteamDeckVariant::Unknown)
 }
 
 pub(crate) async fn device_type() -> Result<String> {

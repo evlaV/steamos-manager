@@ -42,6 +42,22 @@ Some of the Rust dependencies require Clang, which require installing the
 Once you have that and `cargo` is in your path, to build the project you can
 use `cargo build`.
 
+## Troubleshooting
+
+- `cargo build` fails with this error:
+
+  ```
+  --- stderr
+  /usr/include/stdio.h:34:10: fatal error: 'stddef.h' file not found
+  ```
+
+  Solution: make sure clang is setup on your machine! (eg: `pacman -S clang`).
+
+- CI pipeline fails at 'proxy' job with local diffs.
+
+  Solution: use the `update_proxy.sh` script under `steamos-manager-proxy/src`.
+  You might need to run `cargo install zbus_xmlgen` first.
+
 # Developing
 
 As far as IDEs go, Visual Studio Code works pretty well for giving errors about
