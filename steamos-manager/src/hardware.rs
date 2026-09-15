@@ -21,7 +21,7 @@ use tracing::{debug, error};
 use zbus::Connection;
 
 use crate::cec::HdmiCecHardware;
-use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
+use crate::gpu::GpuPowerProfileDriverType;
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
@@ -159,8 +159,16 @@ pub(crate) struct FirmwareAttributeConfig {
 
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct GpuPerformanceConfig {
-    pub driver: GpuPerformanceLevelDriverType,
+    pub driver: GpuPerformanceDriverConfig,
     pub clocks: Option<RangeConfig<u32>>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GpuPerformanceDriverConfig {
+    Amdgpu,
+    Intel,
+    Devfreq { sysfs_path: PathBuf },
 }
 
 #[derive(Clone, Deserialize, Debug)]
