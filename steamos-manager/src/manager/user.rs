@@ -2088,13 +2088,13 @@ mod test {
     use super::*;
     use crate::daemon::channel;
     use crate::daemon::user::{UserCommand, UserContext};
+    use crate::gpu::GpuPowerProfileDriverType;
     use crate::gpu::test::Nodes as GpuNodes;
-    use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
     use crate::hardware::test::fake_model;
     use crate::hardware::{
         BatteryChargeLimitConfig, DeviceConfig, DeviceMatch, DmiMatch, FanSpeedConfig,
-        GpuPerformanceConfig, GpuPowerProfileConfig, PerformanceProfileConfig, RangeConfig,
-        SteamDeckVariant, TdpLimitConfig,
+        GpuPerformanceConfig, GpuPerformanceDriverConfig, GpuPowerProfileConfig,
+        PerformanceProfileConfig, RangeConfig, SteamDeckVariant, TdpLimitConfig,
     };
     use crate::platform::{
         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
@@ -2230,7 +2230,7 @@ mod test {
                 download_mode_fan_speed: NonZeroU32::new(2000),
             }),
             gpu_performance: Some(GpuPerformanceConfig {
-                driver: GpuPerformanceLevelDriverType::Amdgpu,
+                driver: GpuPerformanceDriverConfig::Amdgpu,
                 clocks: Some(RangeConfig::new(200, 1600)),
             }),
             gpu_power_profile: Some(GpuPowerProfileConfig {

@@ -7,6 +7,7 @@
 
 use anyhow::{Result, anyhow, bail, ensure};
 use async_trait::async_trait;
+use itertools::Itertools;
 use num_enum::TryFromPrimitive;
 use regex::Regex;
 use serde::Deserialize;
@@ -20,7 +21,7 @@ use tokio::fs::{self, File, try_exists};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error};
 
-use crate::hardware::{device_config, device_type};
+use crate::hardware::{GpuPerformanceDriverConfig, device_config, device_type};
 use crate::power::find_hwmon;
 use crate::{path, write_synced};
 
@@ -64,6 +65,7 @@ pub enum AmdgpuPowerProfile {
 pub enum GpuPerformanceLevel {
     Amdgpu(AmdgpuPerformanceLevel),
     Intel(IntelPerformanceLevel),
+    Devfreq(DevfreqPerformanceLevel),
 }
 
 #[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
@@ -83,6 +85,13 @@ pub enum IntelPerformanceLevel {
     Manual,
 }
 
+#[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
+#[strum(serialize_all = "snake_case")]
+pub enum DevfreqPerformanceLevel {
+    Auto,
+    Manual,
+}
+
 #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +105,7 @@ pub enum GpuPowerProfileDriverType {
 pub enum GpuPerformanceLevelDriverType {
     Amdgpu,
     Intel,
+    Devfreq,
 }
 
 #[derive(Debug)]
@@ -116,6 +126,13 @@ struct IntelGpuConfig {
     max_freq: &'static str,
     range_min: &'static str,
     range_max: &'static str,
+}
+
+#[derive(Debug)]
+struct DevfreqGpuPerformanceLevelDriver {
+    sysfs_path: PathBuf,
+    available_freqs: Vec<u64>,
+    level: DevfreqPerformanceLevel,
 }
 
 #[async_trait]
@@ -158,9 +175,10 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
         .ok_or(anyhow!("No GPU power profile driver configured"))?;
 
     Ok(match &config.driver {
-        GpuPerformanceLevelDriverType::Amdgpu => Box::new(AmdgpuPerformanceLevelDriver {}),
-        GpuPerformanceLevelDriverType::Intel => {
-            Box::new(IntelGpuPerformanceLevelDriver::new().await?)
+        GpuPerformanceDriverConfig::Amdgpu => Box::new(AmdgpuPerformanceLevelDriver {}),
+        GpuPerformanceDriverConfig::Intel => Box::new(IntelGpuPerformanceLevelDriver::new().await?),
+        GpuPerformanceDriverConfig::Devfreq { .. } => {
+            Box::new(DevfreqGpuPerformanceLevelDriver::new().await?)
         }
     })
 }
@@ -170,6 +188,7 @@ impl Display for GpuPerformanceLevel {
         match self {
             GpuPerformanceLevel::Amdgpu(v) => write!(f, "{v}"),
             GpuPerformanceLevel::Intel(v) => write!(f, "{v}"),
+            GpuPerformanceLevel::Devfreq(v) => write!(f, "{v}"),
         }
     }
 }
@@ -591,13 +610,148 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
     }
 }
 
+impl DevfreqGpuPerformanceLevelDriver {
+    const AVAILABLE_FREQ: &str = "available_frequencies";
+    const CURRENT_FREQ: &str = "cur_freq";
+    const MINIMUM_FREQ: &str = "min_freq";
+    const MAXIMUM_FREQ: &str = "max_freq";
+
+    pub async fn new() -> Result<Self> {
+        let config = device_config().await?;
+        let config = config
+            .as_ref()
+            .and_then(|config| config.gpu_performance.as_ref())
+            .ok_or(anyhow!("No GPU power profile driver configured"))?;
+        let GpuPerformanceDriverConfig::Devfreq { ref sysfs_path } = config.driver else {
+            bail!("Not configured for devfreq");
+        };
+        let available_freqs = fs::read_to_string(sysfs_path.join(Self::AVAILABLE_FREQ))
+            .await
+            .map_err(|message| anyhow!("Error opening sysfs file for reading: {message}"))?;
+        Ok(Self {
+            sysfs_path: sysfs_path.clone(),
+            available_freqs: available_freqs
+                .split_whitespace()
+                .flat_map(|v| v.parse::<u64>())
+                .sorted()
+                .collect(),
+            level: DevfreqPerformanceLevel::Auto,
+        })
+    }
+
+    pub async fn write_value(&self, file: &str, value: &str) -> Result<()> {
+        Ok(
+            write_synced(self.sysfs_path.join(PathBuf::from(file)), value.as_bytes())
+                .await
+                .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?,
+        )
+    }
+
+    fn min_freq(&self) -> u32 {
+        u32::try_from(*self.available_freqs.first().unwrap_or(&0u64) / 1_000_000u64)
+            .unwrap_or(u32::MAX)
+    }
+
+    fn max_freq(&self) -> u32 {
+        u32::try_from(*self.available_freqs.last().unwrap_or(&0u64) / 1_000_000u64)
+            .unwrap_or(u32::MAX)
+    }
+}
+
+#[async_trait]
+impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+    fn performance_level_from_str(&self, value: &str) -> Result<GpuPerformanceLevel> {
+        Ok(GpuPerformanceLevel::Devfreq(
+            DevfreqPerformanceLevel::from_str(value)?,
+        ))
+    }
+
+    async fn get_available_performance_levels(&self) -> Result<Vec<GpuPerformanceLevel>> {
+        Ok(vec![
+            GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto),
+            GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Manual),
+        ])
+    }
+
+    async fn get_performance_level(&self) -> Result<GpuPerformanceLevel> {
+        Ok(GpuPerformanceLevel::Devfreq(self.level))
+    }
+
+    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
+        let GpuPerformanceLevel::Devfreq(level) = level else {
+            bail!("This is not an devfreq-compatible performance level");
+        };
+
+        let range = self.get_clocks_range().await?;
+
+        match level {
+            DevfreqPerformanceLevel::Auto => {
+                self.write_value(Self::MINIMUM_FREQ, &(range.start().to_string() + "000000"))
+                    .await?;
+                self.write_value(Self::MAXIMUM_FREQ, &(range.end().to_string() + "000000"))
+                    .await?;
+            }
+            DevfreqPerformanceLevel::Manual => {
+                let mean = (range.start() + range.end()) / 2;
+                self.level = level; // set_clocks checks for this so we need to set it in advance
+                self.set_clocks(mean).await?;
+            }
+        }
+
+        self.level = level;
+
+        Ok(())
+    }
+
+    async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>> {
+        if let Some(range) = device_config()
+            .await?
+            .as_ref()
+            .and_then(|config| config.gpu_performance.as_ref())
+            .and_then(|config| config.clocks)
+        {
+            return Ok(range.min..=range.max);
+        }
+        Ok(self.min_freq()..=self.max_freq())
+    }
+
+    async fn get_clocks(&self) -> Result<u32> {
+        let current_freq = fs::read_to_string(self.sysfs_path.join(Self::CURRENT_FREQ))
+            .await
+            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
+
+        Ok(current_freq.trim().parse::<u32>()? / 1_000_000u32)
+    }
+
+    async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
+        if self.level == DevfreqPerformanceLevel::Auto {
+            return Ok(());
+        }
+
+        let cur = self.get_clocks().await?;
+        let out = clocks.to_string() + "000000";
+
+        // Write order to widen the range first, then narrow it
+        if cur < clocks {
+            self.write_value(Self::MINIMUM_FREQ, &out).await?;
+            self.write_value(Self::MAXIMUM_FREQ, &out).await?;
+        } else {
+            self.write_value(Self::MAXIMUM_FREQ, &out).await?;
+            self.write_value(Self::MINIMUM_FREQ, &out).await?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::hardware::SteamDeckVariant;
     use crate::hardware::test::fake_model;
+    use crate::hardware::{DeviceConfig, GpuPerformanceConfig, SteamDeckVariant};
     use crate::power::HWMON_PREFIX;
-    use crate::{enum_roundtrip, path, testing};
+    use crate::testing::{self, TestHandle};
+    use crate::{enum_roundtrip, path};
     use tokio::fs::{create_dir_all, read_to_string, write};
 
     #[derive(Debug, Default, Clone)]
@@ -664,6 +818,43 @@ pub(crate) mod test {
         write(freq_path.join("max_freq"), "1200").await?;
         write(freq_path.join("rpe_freq"), "300").await?;
         write(freq_path.join("rpa_freq"), "1200").await?;
+
+        Ok(())
+    }
+
+    pub async fn setup_devfreq(handle: &TestHandle) -> Result<()> {
+        let sysfs_path = path("devfreq");
+        *handle.test.device_config.lock().await = Some(DeviceConfig {
+            gpu_performance: Some(GpuPerformanceConfig {
+                driver: GpuPerformanceDriverConfig::Devfreq {
+                    sysfs_path: sysfs_path.clone(),
+                },
+                clocks: None,
+            }),
+            ..DeviceConfig::default()
+        });
+        create_dir_all(&sysfs_path).await?;
+
+        write(
+            sysfs_path.join(DevfreqGpuPerformanceLevelDriver::AVAILABLE_FREQ),
+            "500000000 800000000 1000000000",
+        )
+        .await?;
+        write(
+            sysfs_path.join(DevfreqGpuPerformanceLevelDriver::CURRENT_FREQ),
+            "800000000",
+        )
+        .await?;
+        write(
+            sysfs_path.join(DevfreqGpuPerformanceLevelDriver::MINIMUM_FREQ),
+            "500000000",
+        )
+        .await?;
+        write(
+            sysfs_path.join(DevfreqGpuPerformanceLevelDriver::MAXIMUM_FREQ),
+            "1000000000",
+        )
+        .await?;
 
         Ok(())
     }
@@ -1485,5 +1676,61 @@ CCLK_RANGE in Core0:
         .expect("parse max_freq");
         assert_eq!(min_freq, 800);
         assert_eq!(max_freq, 800);
+    }
+
+    #[tokio::test]
+    async fn test_devfreq_gpu_clocks_range() {
+        let h = testing::start();
+
+        setup_devfreq(&h).await.expect("setup_devfreq");
+
+        let driver = DevfreqGpuPerformanceLevelDriver::new()
+            .await
+            .expect("Devfreq driver creation");
+
+        let range = driver.get_clocks_range().await.expect("get_clocks_range");
+        assert_eq!(range, 500..=1000);
+
+        let clocks = driver.get_clocks().await.expect("get_clocks");
+        assert_eq!(clocks, 800);
+    }
+
+    #[tokio::test]
+    async fn test_devfreq_gpu_set_clocks() {
+        let h = testing::start();
+
+        setup_devfreq(&h).await.expect("setup_devfreq");
+
+        let mut driver = DevfreqGpuPerformanceLevelDriver::new()
+            .await
+            .expect("Devfreq driver creation");
+
+        driver
+            .set_performance_level(GpuPerformanceLevel::Devfreq(
+                DevfreqPerformanceLevel::Manual,
+            ))
+            .await
+            .expect("set manual mode");
+
+        driver.set_clocks(1000).await.expect("set_clocks");
+
+        let min_freq =
+            read_to_string(path("devfreq").join(DevfreqGpuPerformanceLevelDriver::MINIMUM_FREQ))
+                .await
+                .expect("read min_freq")
+                .trim()
+                .parse::<u64>()
+                .expect("parse min_freq")
+                / 1_000_000u64;
+        let max_freq =
+            read_to_string(path("devfreq").join(DevfreqGpuPerformanceLevelDriver::MAXIMUM_FREQ))
+                .await
+                .expect("read max_freq")
+                .trim()
+                .parse::<u64>()
+                .expect("parse max_freq")
+                / 1_000_000u64;
+        assert_eq!(min_freq, 1000);
+        assert_eq!(max_freq, 1000);
     }
 }
