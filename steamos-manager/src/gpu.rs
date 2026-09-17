@@ -92,7 +92,7 @@ pub enum DevfreqPerformanceLevel {
     Manual,
 }
 
-#[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
+#[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Eq, Debug, Clone, Hash)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 pub enum GpuPowerProfileDriverType {
