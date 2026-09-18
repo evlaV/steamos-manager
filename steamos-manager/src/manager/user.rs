@@ -37,8 +37,8 @@ use crate::daemon::DaemonCommand;
 use crate::daemon::user::Command;
 use crate::error::{to_zbus_error, to_zbus_fdo_error, zbus_to_zbus_fdo};
 use crate::gpu::{
-    GpuPerformanceLevelDriver, GpuPowerProfileDriver, gpu_performance_level_driver,
-    gpu_power_profile_driver,
+    GpuPerformanceLevelDriver, GpuPowerProfileDriver, StandardGpuPerformanceLevel,
+    gpu_performance_level_driver, gpu_power_profile_driver,
 };
 use crate::hardware::{
     SteamDeckVariant, device_config, device_type, device_variant, steam_deck_variant,
@@ -582,7 +582,7 @@ impl GpuPerformanceLevel1 {
             .driver
             .lock()
             .await
-            .get_clocks_range()
+            .get_clocks_range_for_performance_level(StandardGpuPerformanceLevel::Manual.into())
             .await
             .map_err(to_zbus_fdo_error)?
             .start())
@@ -594,7 +594,7 @@ impl GpuPerformanceLevel1 {
             .driver
             .lock()
             .await
-            .get_clocks_range()
+            .get_clocks_range_for_performance_level(StandardGpuPerformanceLevel::Manual.into())
             .await
             .map_err(to_zbus_fdo_error)?
             .end())
@@ -2246,6 +2246,7 @@ mod test {
             gpu_performance: Some(GpuPerformanceConfig {
                 driver: GpuPerformanceDriverConfig::Amdgpu,
                 clocks: Some(RangeConfig::new(200, 1600)),
+                limits: HashMap::default(),
             }),
             gpu_power_profile: Some(GpuPowerProfileConfig {
                 driver: GpuPowerProfileDriverType::Amdgpu,

@@ -166,6 +166,8 @@ pub(crate) struct FirmwareAttributeConfig {
 pub(crate) struct GpuPerformanceConfig {
     pub driver: GpuPerformanceDriverConfig,
     pub clocks: Option<RangeConfig<u32>>,
+    #[serde(default)]
+    pub limits: HashMap<String, OptionalRangeConfig<u32>>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
