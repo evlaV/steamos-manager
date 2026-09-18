@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Error, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use itertools::Itertools;
 use num_enum::TryFromPrimitive;
@@ -63,9 +63,23 @@ pub enum AmdgpuPowerProfile {
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone, Hash)]
 pub enum GpuPerformanceLevel {
+    Standard(StandardGpuPerformanceLevel),
     Amdgpu(AmdgpuPerformanceLevel),
     Intel(IntelPerformanceLevel),
     Devfreq(DevfreqPerformanceLevel),
+}
+
+#[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
+#[strum(serialize_all = "snake_case")]
+pub enum StandardGpuPerformanceLevel {
+    Auto,
+    Manual,
+}
+
+impl From<StandardGpuPerformanceLevel> for GpuPerformanceLevel {
+    fn from(level: StandardGpuPerformanceLevel) -> GpuPerformanceLevel {
+        GpuPerformanceLevel::Standard(level)
+    }
 }
 
 #[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
@@ -78,6 +92,33 @@ pub enum AmdgpuPerformanceLevel {
     ProfilePeak,
 }
 
+impl From<StandardGpuPerformanceLevel> for AmdgpuPerformanceLevel {
+    fn from(level: StandardGpuPerformanceLevel) -> AmdgpuPerformanceLevel {
+        match level {
+            StandardGpuPerformanceLevel::Auto => AmdgpuPerformanceLevel::Auto,
+            StandardGpuPerformanceLevel::Manual => AmdgpuPerformanceLevel::Manual,
+        }
+    }
+}
+
+impl From<AmdgpuPerformanceLevel> for GpuPerformanceLevel {
+    fn from(level: AmdgpuPerformanceLevel) -> GpuPerformanceLevel {
+        GpuPerformanceLevel::Amdgpu(level)
+    }
+}
+
+impl TryFrom<GpuPerformanceLevel> for AmdgpuPerformanceLevel {
+    type Error = Error;
+
+    fn try_from(level: GpuPerformanceLevel) -> Result<AmdgpuPerformanceLevel> {
+        Ok(match level {
+            GpuPerformanceLevel::Standard(level) => level.into(),
+            GpuPerformanceLevel::Amdgpu(level) => level,
+            _ => bail!("This is not an amdgpu-compatible performance level"),
+        })
+    }
+}
+
 #[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
 #[strum(serialize_all = "snake_case")]
 pub enum IntelPerformanceLevel {
@@ -85,11 +126,65 @@ pub enum IntelPerformanceLevel {
     Manual,
 }
 
+impl From<StandardGpuPerformanceLevel> for IntelPerformanceLevel {
+    fn from(level: StandardGpuPerformanceLevel) -> IntelPerformanceLevel {
+        match level {
+            StandardGpuPerformanceLevel::Auto => IntelPerformanceLevel::Auto,
+            StandardGpuPerformanceLevel::Manual => IntelPerformanceLevel::Manual,
+        }
+    }
+}
+
+impl From<IntelPerformanceLevel> for GpuPerformanceLevel {
+    fn from(level: IntelPerformanceLevel) -> GpuPerformanceLevel {
+        GpuPerformanceLevel::Intel(level)
+    }
+}
+
+impl TryFrom<GpuPerformanceLevel> for IntelPerformanceLevel {
+    type Error = Error;
+
+    fn try_from(level: GpuPerformanceLevel) -> Result<IntelPerformanceLevel> {
+        Ok(match level {
+            GpuPerformanceLevel::Standard(level) => level.into(),
+            GpuPerformanceLevel::Intel(level) => level,
+            _ => bail!("This is not an Intel-compatible performance level"),
+        })
+    }
+}
+
 #[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
 #[strum(serialize_all = "snake_case")]
 pub enum DevfreqPerformanceLevel {
     Auto,
     Manual,
+}
+
+impl From<StandardGpuPerformanceLevel> for DevfreqPerformanceLevel {
+    fn from(level: StandardGpuPerformanceLevel) -> DevfreqPerformanceLevel {
+        match level {
+            StandardGpuPerformanceLevel::Auto => DevfreqPerformanceLevel::Auto,
+            StandardGpuPerformanceLevel::Manual => DevfreqPerformanceLevel::Manual,
+        }
+    }
+}
+
+impl From<DevfreqPerformanceLevel> for GpuPerformanceLevel {
+    fn from(level: DevfreqPerformanceLevel) -> GpuPerformanceLevel {
+        GpuPerformanceLevel::Devfreq(level)
+    }
+}
+
+impl TryFrom<GpuPerformanceLevel> for DevfreqPerformanceLevel {
+    type Error = Error;
+
+    fn try_from(level: GpuPerformanceLevel) -> Result<DevfreqPerformanceLevel> {
+        Ok(match level {
+            GpuPerformanceLevel::Standard(level) => level.into(),
+            GpuPerformanceLevel::Devfreq(level) => level,
+            _ => bail!("This is not an devfreq-compatible performance level"),
+        })
+    }
 }
 
 #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Eq, Debug, Clone, Hash)]
@@ -186,6 +281,7 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
 impl Display for GpuPerformanceLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
+            GpuPerformanceLevel::Standard(v) => write!(f, "{v}"),
             GpuPerformanceLevel::Amdgpu(v) => write!(f, "{v}"),
             GpuPerformanceLevel::Intel(v) => write!(f, "{v}"),
             GpuPerformanceLevel::Devfreq(v) => write!(f, "{v}"),
@@ -338,9 +434,7 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
     }
 
     async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
-        let GpuPerformanceLevel::Amdgpu(level) = level else {
-            bail!("This is not an amdgpu-compatible performance level");
-        };
+        let level: AmdgpuPerformanceLevel = level.try_into()?;
         let level: String = level.to_string();
         Self::write_sysfs_contents(Self::PERFORMANCE_LEVEL_SUFFIX, level.as_bytes()).await
     }
@@ -550,11 +644,7 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
     }
 
     async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
-        let GpuPerformanceLevel::Intel(level) = level else {
-            bail!("This is not an Intel-compatible performance level");
-        };
-
-        match level {
+        match TryInto::<IntelPerformanceLevel>::try_into(level)? {
             IntelPerformanceLevel::Auto => {
                 // For Auto mode, we need to set min and max back to hardware range
                 let range_min = self.read_freq(self.config.range_min).await?;
@@ -678,9 +768,7 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
-        let GpuPerformanceLevel::Devfreq(level) = level else {
-            bail!("This is not an devfreq-compatible performance level");
-        };
+        let level: DevfreqPerformanceLevel = level.try_into()?;
 
         let range = self.get_clocks_range().await?;
 
