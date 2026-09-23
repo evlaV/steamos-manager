@@ -12,7 +12,7 @@ use num_enum::TryFromPrimitive;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Deref, RangeInclusive};
 use std::path::{Path, PathBuf};
@@ -84,7 +84,8 @@ pub enum GpuPerformanceLevel {
     Devfreq(DevfreqPerformanceLevel),
 }
 
-#[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
+#[derive(Deserialize, Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum StandardGpuPerformanceLevel {
     Auto,
@@ -247,7 +248,7 @@ struct DevfreqGpuPerformanceLevelDriver {
 }
 
 #[async_trait]
-pub(crate) trait GpuPowerProfileDriver: Send + Sync {
+pub(crate) trait GpuPowerProfileDriver: Send + Sync + Debug {
     fn power_profile_from_str(&self, value: &str) -> Result<GpuPowerProfile>;
     async fn get_available_power_profiles(&self) -> Result<Vec<(u32, String)>>;
     async fn get_power_profile(&self) -> Result<GpuPowerProfile>;
@@ -255,7 +256,7 @@ pub(crate) trait GpuPowerProfileDriver: Send + Sync {
 }
 
 #[async_trait]
-pub(crate) trait GpuPerformanceLevelDriver: Send + Sync {
+pub(crate) trait GpuPerformanceLevelDriver: Send + Sync + Debug {
     fn performance_level_from_str(&self, value: &str) -> Result<GpuPerformanceLevel>;
     async fn get_available_performance_levels(&self) -> Result<Vec<GpuPerformanceLevel>>;
     async fn get_performance_level(&self) -> Result<GpuPerformanceLevel>;

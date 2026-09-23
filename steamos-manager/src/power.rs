@@ -34,7 +34,7 @@ use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, ObjectServer, fdo};
 
 use crate::error::{to_zbus_error, to_zbus_fdo_error};
-use crate::gpu::AMDGPU_HWMON_NAME;
+use crate::gpu::{AMDGPU_HWMON_NAME, GpuPerformanceLevelDriver, gpu_performance_level_driver};
 use crate::hardware::{
     CustomPerformanceProfile, FanControlState, OptionalRangeConfig, PlatformProfileDriverConfig,
     device_config,
@@ -811,6 +811,7 @@ pub(crate) struct AcpiPlatformProfileDriver {
 pub(crate) struct CustomPlatformProfileDriver {
     profiles: HashMap<String, CustomPerformanceProfile>,
     current_profile: Option<String>,
+    gpu_performance_level_driver: Option<ArcMutexBox<dyn GpuPerformanceLevelDriver>>,
 }
 
 #[async_trait]
@@ -865,6 +866,7 @@ impl CustomPlatformProfileDriver {
         Ok(Self {
             profiles: profiles.clone(),
             current_profile,
+            gpu_performance_level_driver: gpu_performance_level_driver().await.ok(),
         })
     }
 }
@@ -888,6 +890,14 @@ impl PlatformProfileDriver for CustomPlatformProfileDriver {
         };
         for cpufreq in &profile_info.cpufreq {
             cpufreq.write_sysfs_contents().await?;
+        }
+        if let Some(driver) = &self.gpu_performance_level_driver {
+            let mut driver = driver.lock().await;
+            for (level, range) in profile_info.gpu_limits.iter() {
+                driver
+                    .set_clocks_range_for_performance_level((*level).into(), range.min, range.max)
+                    .await?;
+            }
         }
         self.current_profile = Some(profile.to_string());
         Ok(())

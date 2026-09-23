@@ -21,7 +21,7 @@ use tracing::{debug, error};
 use zbus::Connection;
 
 use crate::cec::HdmiCecHardware;
-use crate::gpu::GpuPowerProfileDriverType;
+use crate::gpu::{GpuPowerProfileDriverType, StandardGpuPerformanceLevel};
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
@@ -128,6 +128,8 @@ pub(crate) struct BatteryChargeLimitConfig {
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct CustomPerformanceProfile {
     pub cpufreq: Vec<CpuFreqRange>,
+    #[serde(default)]
+    pub gpu_limits: HashMap<StandardGpuPerformanceLevel, OptionalRangeConfig<u32>>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
