@@ -178,6 +178,21 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.DongleDebug1
+      @short_description: Optional interface with debugging facilities for the Steam Machine internal dongle
+  -->
+  <interface name="com.steampowered.SteamOSManager1.DongleDebug1">
+
+    <!--
+        RebootDongle:
+
+        Reboot the internal dongle by cycling power to it
+    -->
+    <method name="RebootDongle"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.GpuPerformanceLevel1
       @short_description: Optional interface for generic GPU properties.
   -->

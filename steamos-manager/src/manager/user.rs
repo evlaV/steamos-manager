@@ -164,6 +164,10 @@ struct FirmwareDebug1 {
     proxy: Proxy<'static>,
 }
 
+struct DongleDebug1 {
+    manager: RootManagerProxy<'static>,
+}
+
 struct GpuPerformanceLevel1 {
     proxy: Proxy<'static>,
     driver: Box<dyn GpuPerformanceLevelDriver>,
@@ -497,6 +501,16 @@ impl FirmwareDebug1 {
     ) -> zbus::Result<()> {
         let _: () = setter!(self, "EcLogging", state)?;
         self.ec_logging_changed(&ctx).await
+    }
+}
+
+#[interface(name = "com.steampowered.SteamOSManager1.DongleDebug1")]
+impl DongleDebug1 {
+    async fn reboot_dongle(&self) -> fdo::Result<()> {
+        self.manager
+            .reboot_dongle()
+            .await
+            .map_err(to_zbus_fdo_error)
     }
 }
 
@@ -1900,6 +1914,9 @@ pub(crate) async fn create_interfaces(
         proxy: proxy.clone(),
         order: SerialOrderValidator::default(),
     };
+    let dongle_debug = DongleDebug1 {
+        manager: root_manager.clone(),
+    };
 
     let hdmi_cec = HdmiCecControl::new(&session).await;
     let cecd_service;
@@ -1974,6 +1991,10 @@ pub(crate) async fn create_interfaces(
     object_server.at(MANAGER_PATH, cpu_scaling).await?;
     if CpuSchedulerManager::is_supported().await? {
         object_server.at(MANAGER_PATH, cpu_scheduler).await?;
+    }
+
+    if device_type().await.unwrap_or_default() == "steam_machine" {
+        object_server.at(MANAGER_PATH, dongle_debug).await?;
     }
 
     match gpu_performance_level_driver().await {
