@@ -287,6 +287,7 @@ impl SteamOSManager {
         self.ec_logging_changed(&ctx).await
     }
 
+    #[cfg(target_arch = "x86_64")]
     async fn reboot_dongle(&self) -> fdo::Result<()> {
         const PORT: u16 = 0x6c;
         const CMD_DONGLE_OFF: u8 = 0xea;
@@ -297,7 +298,7 @@ impl SteamOSManager {
             return Err(zbus::Error::from(std::io::Error::last_os_error()).into());
         }
 
-        let result = (|| {
+        let result = {
             unsafe {
                 std::arch::asm!(
                     "out dx, al",
@@ -316,7 +317,7 @@ impl SteamOSManager {
                 );
             }
             Ok(())
-        })();
+        };
 
         let disable_ret = unsafe { libc::ioperm(PORT.into(), 1, 0) };
         if disable_ret != 0 {
@@ -324,6 +325,13 @@ impl SteamOSManager {
         }
 
         result
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    async fn reboot_dongle(&self) -> fdo::Result<()> {
+        Err(anyhow!(
+            "reboot-dongle is not supported on this architecture"
+        ))
     }
 
     #[zbus(property(emits_changed_signal = "const"))]
