@@ -16,8 +16,10 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs::{File, read_dir, read_to_string};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use zbus::message::Header;
@@ -78,6 +80,8 @@ where
         }
     }
 }
+
+pub(crate) type ArcMutexBox<T> = Arc<Mutex<Box<T>>>;
 
 #[derive(Debug)]
 struct AsyncFileSource<F: Format, P: AsRef<Path> + Sized + Send + Sync> {
