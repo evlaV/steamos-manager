@@ -46,7 +46,7 @@ use crate::wifi::{
     WifiBackend, WifiDebugMode, WifiPowerManagement, extract_wifi_trace, generate_wifi_dump,
     set_wifi_backend, set_wifi_debug_mode, set_wifi_power_management_state,
 };
-use crate::{SerialOrderValidator, path};
+use crate::{ArcMutexBox, SerialOrderValidator, path};
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 #[repr(u32)]
@@ -64,9 +64,9 @@ pub struct SteamOSManager {
     wifi_debug_mode: WifiDebugMode,
     fan_control: FanControl,
     tdp_limit_manager: Option<Box<dyn TdpLimitManager>>,
-    platform_profile: Option<Box<dyn PlatformProfileDriver>>,
-    gpu_performance_level: Option<Box<dyn GpuPerformanceLevelDriver>>,
-    gpu_power_profile: Option<Box<dyn GpuPowerProfileDriver>>,
+    platform_profile: Option<ArcMutexBox<dyn PlatformProfileDriver>>,
+    gpu_performance_level: Option<ArcMutexBox<dyn GpuPerformanceLevelDriver>>,
+    gpu_power_profile: Option<ArcMutexBox<dyn GpuPowerProfileDriver>>,
     // Whether we should use trace-cmd or not.
     // True on galileo devices, false otherwise
     should_trace: bool,
@@ -437,9 +437,13 @@ impl SteamOSManager {
             )));
         };
         let profile = driver
+            .lock()
+            .await
             .power_profile_from_str(value)
             .map_err(to_zbus_fdo_error)?;
         driver
+            .lock()
+            .await
             .set_power_profile(profile)
             .await
             .inspect_err(|message| error!("Error setting GPU power profile: {message}"))
@@ -514,11 +518,13 @@ impl SteamOSManager {
                 "GPU performance settings not configured",
             )));
         };
-        let level = match driver.performance_level_from_str(level) {
+        let level = match driver.lock().await.performance_level_from_str(level) {
             Ok(level) => level,
             Err(e) => return Err(to_zbus_fdo_error(e)),
         };
         driver
+            .lock()
+            .await
             .set_performance_level(level)
             .await
             .inspect_err(|message| error!("Error setting GPU performance level: {message}"))
@@ -540,6 +546,8 @@ impl SteamOSManager {
             )));
         };
         driver
+            .lock()
+            .await
             .set_clocks(clocks)
             .await
             .inspect_err(|message| error!("Error setting manual GPU clock: {message}"))
@@ -727,6 +735,8 @@ impl SteamOSManager {
             )));
         };
         driver
+            .lock()
+            .await
             .set_platform_profile(profile)
             .await
             .map_err(to_zbus_fdo_error)
@@ -1043,7 +1053,7 @@ mod test {
             .await
             .expect("proxy_set");
         assert_eq!(
-            driver.get_performance_level().await.unwrap(),
+            driver.lock().await.get_performance_level().await.unwrap(),
             GpuPerformanceLevel::Amdgpu(AmdgpuPerformanceLevel::Low)
         );
 

@@ -15,7 +15,7 @@ use tempfile::{TempDir, tempdir};
 use tokio::fs::{create_dir_all, read, write};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 use tracing::subscriber::set_global_default;
 use tracing::{debug, error};
 use tracing_subscriber::prelude::*;
@@ -27,9 +27,11 @@ use zbus::object_server::Interface;
 use zbus::zvariant::ObjectPath;
 use zbus_xml::{Method, Node, Property, Signal};
 
+use crate::gpu::{GpuPerformanceLevelDriver, GpuPowerProfileDriver};
 use crate::hardware::DeviceConfig;
-use crate::path;
 use crate::platform::PlatformConfig;
+use crate::power::PlatformProfileDriver;
+use crate::{ArcMutexBox, path};
 
 static INIT: Once = Once::new();
 
@@ -86,6 +88,9 @@ pub fn start() -> TestHandle {
             dbus_address: Mutex::new(None),
             platform_config: Mutex::new(None),
             device_config: Mutex::new(None),
+            platform_profile_driver: OnceCell::new(),
+            gpu_power_profile_driver: OnceCell::new(),
+            gpu_performance_level_driver: OnceCell::new(),
         });
         *lock.borrow_mut() = Some(test.clone());
         TestHandle { test }
@@ -122,6 +127,9 @@ pub struct Test {
     pub dbus_address: Mutex<Option<Address>>,
     pub platform_config: Mutex<Option<PlatformConfig>>,
     pub device_config: Mutex<Option<DeviceConfig>>,
+    pub platform_profile_driver: OnceCell<ArcMutexBox<dyn PlatformProfileDriver>>,
+    pub gpu_power_profile_driver: OnceCell<ArcMutexBox<dyn GpuPowerProfileDriver>>,
+    pub gpu_performance_level_driver: OnceCell<ArcMutexBox<dyn GpuPerformanceLevelDriver>>,
 }
 
 pub struct TestHandle {

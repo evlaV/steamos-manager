@@ -17,17 +17,22 @@ use std::hash::Hash;
 use std::ops::{Deref, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use strum::{Display, EnumString, VariantNames};
 use tokio::fs::{self, File, try_exists};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::Mutex;
+#[cfg(not(test))]
+use tokio::sync::OnceCell;
 use tracing::{debug, error};
 
 use crate::hardware::{
     GpuPerformanceDriverConfig, OptionalRangeConfig, device_config, device_type,
 };
 use crate::power::find_hwmon;
-use crate::{path, write_synced};
+#[cfg(test)]
+use crate::testing;
+use crate::{ArcMutexBox, path, write_synced};
 
 pub(crate) const AMDGPU_HWMON_NAME: &str = "amdgpu";
 
@@ -41,6 +46,12 @@ static AMDGPU_POWER_PROFILE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 static AMDGPU_CLOCK_LEVELS_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(?<index>[0-9]+): (?<value>[0-9]+)Mhz").unwrap());
+
+#[cfg(not(test))]
+static GPU_POWER_PROFILE: OnceCell<ArcMutexBox<dyn GpuPowerProfileDriver>> = OnceCell::const_new();
+#[cfg(not(test))]
+static GPU_PERFORMANCE_LEVEL: OnceCell<ArcMutexBox<dyn GpuPerformanceLevelDriver>> =
+    OnceCell::const_new();
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub enum GpuPowerProfile {
@@ -302,7 +313,7 @@ impl Deref for GpuClockLimits {
     }
 }
 
-pub(crate) async fn gpu_power_profile_driver() -> Result<Box<dyn GpuPowerProfileDriver>> {
+async fn new_gpu_power_profile_driver() -> Result<Box<dyn GpuPowerProfileDriver>> {
     let config = device_config().await?;
     let config = config
         .as_ref()
@@ -314,7 +325,22 @@ pub(crate) async fn gpu_power_profile_driver() -> Result<Box<dyn GpuPowerProfile
     })
 }
 
-pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerformanceLevelDriver>> {
+pub(crate) async fn gpu_power_profile_driver() -> Result<ArcMutexBox<dyn GpuPowerProfileDriver>> {
+    #[cfg(not(test))]
+    let once = &GPU_POWER_PROFILE;
+    #[cfg(test)]
+    let once = &testing::current().gpu_power_profile_driver;
+
+    let driver = once
+        .get_or_try_init::<Error, _, _>(async || {
+            let driver = new_gpu_power_profile_driver().await?;
+            Ok(Arc::new(Mutex::new(driver)))
+        })
+        .await?;
+    Ok(driver.clone())
+}
+
+async fn new_gpu_performance_level_driver() -> Result<Box<dyn GpuPerformanceLevelDriver>> {
     let config = device_config().await?;
     let config = config
         .as_ref()
@@ -328,6 +354,22 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
             Box::new(DevfreqGpuPerformanceLevelDriver::new().await?)
         }
     })
+}
+
+pub(crate) async fn gpu_performance_level_driver()
+-> Result<ArcMutexBox<dyn GpuPerformanceLevelDriver>> {
+    #[cfg(not(test))]
+    let once = &GPU_PERFORMANCE_LEVEL;
+    #[cfg(test)]
+    let once = &testing::current().gpu_performance_level_driver;
+
+    let driver = once
+        .get_or_try_init::<Error, _, _>(async || {
+            let driver = new_gpu_performance_level_driver().await?;
+            Ok(Arc::new(Mutex::new(driver)))
+        })
+        .await?;
+    Ok(driver.clone())
 }
 
 impl Display for GpuPerformanceLevel {

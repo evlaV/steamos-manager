@@ -5,24 +5,28 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Error, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use nix::errno::Errno;
 use num_enum::TryFromPrimitive;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::fmt::Debug;
 use std::num::NonZeroU32;
 use std::ops::RangeInclusive;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use strum::{Display, EnumIter, EnumString, VariantNames};
 use tokio::fs::{self, File, read_dir, read_to_string, try_exists};
 use tokio::io::{AsyncWriteExt, ErrorKind, Interest};
 use tokio::net::unix::pipe;
+#[cfg(not(test))]
+use tokio::sync::OnceCell;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
+use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 use zbus::names::OwnedBusName;
@@ -41,7 +45,9 @@ use crate::manager::user::TdpLimit1;
 use crate::proxy::TdpLimit1Proxy;
 use crate::sysfs::{SysfsWritten, find_sysdir, sysfs_queued_write};
 use crate::systemd::{EnableState, JobMode, SystemdUnit};
-use crate::{SerialOrderValidator, Service, path, write_synced};
+#[cfg(test)]
+use crate::testing;
+use crate::{ArcMutexBox, SerialOrderValidator, Service, path, write_synced};
 
 #[cfg(not(test))]
 const HWMON_PREFIX: &str = "/sys/class/hwmon";
@@ -79,6 +85,9 @@ const SB_PATHS: &[&str] = &[
 const SB_PATHS: &[&str] = &["power_supply", "power_supply_legacy"];
 pub const BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT: i32 = 10;
 const SB_LIMIT_PATH: &str = "charge_control_end_threshold";
+
+#[cfg(not(test))]
+static PLATFORM_PROFILE: OnceCell<ArcMutexBox<dyn PlatformProfileDriver>> = OnceCell::const_new();
 
 #[derive(Display, EnumString, Hash, Eq, PartialEq, Debug, Copy, Clone)]
 #[strum(serialize_all = "lowercase")]
@@ -129,7 +138,7 @@ pub enum CPUBoostState {
     Enabled = 1,
 }
 
-pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>> {
+async fn new_platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>> {
     let config = device_config().await?;
     let config = config
         .as_ref()
@@ -147,6 +156,21 @@ pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileD
     }
 }
 
+pub(crate) async fn platform_profile_driver() -> Result<ArcMutexBox<dyn PlatformProfileDriver>> {
+    #[cfg(not(test))]
+    let once = &PLATFORM_PROFILE;
+    #[cfg(test)]
+    let once = &testing::current().platform_profile_driver;
+
+    let driver = once
+        .get_or_try_init::<Error, _, _>(async || {
+            let driver = new_platform_profile_driver().await?;
+            Ok(Arc::new(Mutex::new(driver)))
+        })
+        .await?;
+    Ok(driver.clone())
+}
+
 #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
@@ -159,12 +183,14 @@ pub enum TdpLimitingMethod {
 #[derive(Debug)]
 struct AmdgpuHwmonTdpLimitManager {
     performance_profile: Option<String>,
+    platform_profile_driver: Option<ArcMutexBox<dyn PlatformProfileDriver>>,
 }
 
 #[derive(Debug)]
 struct FirmwareAttributeLimitManager {
     attribute: String,
     performance_profile: Option<String>,
+    platform_profile_driver: Option<ArcMutexBox<dyn PlatformProfileDriver>>,
 }
 
 #[derive(Debug)]
@@ -203,10 +229,12 @@ pub(crate) async fn tdp_limit_manager(system: &Connection) -> Result<Box<dyn Tdp
                 Box::new(FirmwareAttributeLimitManager {
                     attribute: firmware_attribute.attribute.clone(),
                     performance_profile: firmware_attribute.performance_profile.clone(),
+                    platform_profile_driver: platform_profile_driver().await.ok(),
                 })
             }
             TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {
                 performance_profile: config.performance_profile.clone(),
+                platform_profile_driver: platform_profile_driver().await.ok(),
             }),
             TdpLimitingMethod::RemoteInterface => Box::new(RemoteInterfaceLimitManager {
                 connection: system.clone(),
@@ -549,8 +577,8 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
         let Some(ref performance_profile) = self.performance_profile else {
             return Ok(true);
         };
-        if let Ok(driver) = platform_profile_driver().await {
-            Ok(driver.get_platform_profile().await? == *performance_profile)
+        if let Some(driver) = &self.platform_profile_driver {
+            Ok(driver.lock().await.get_platform_profile().await? == *performance_profile)
         } else {
             Ok(true)
         }
@@ -648,8 +676,8 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
         let Some(ref performance_profile) = self.performance_profile else {
             return Ok(true);
         };
-        if let Ok(driver) = platform_profile_driver().await {
-            Ok(driver.get_platform_profile().await? == *performance_profile)
+        if let Some(driver) = &self.platform_profile_driver {
+            Ok(driver.lock().await.get_platform_profile().await? == *performance_profile)
         } else {
             Ok(true)
         }
@@ -786,7 +814,7 @@ pub(crate) struct CustomPlatformProfileDriver {
 }
 
 #[async_trait]
-pub(crate) trait PlatformProfileDriver: Send + Sync {
+pub(crate) trait PlatformProfileDriver: Send + Sync + Debug {
     // This can be used from the user and root managers
     async fn get_available_platform_profiles(&self) -> Result<Vec<String>>;
     // This can be used from the user and root managers

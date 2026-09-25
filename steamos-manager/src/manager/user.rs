@@ -49,9 +49,10 @@ use crate::manager::{MANAGER_PATH, RemoteInterface, RemoteInterfaceConfig, Remot
 use crate::path;
 use crate::platform::platform_config;
 use crate::power::{
-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, TdpManagerCommand,
-    get_available_cpu_scaling_governors, get_cpu_boost_state, get_cpu_scaling_governor,
-    get_max_charge_level, platform_profile_driver, register_tdp_limit1, unregister_tdp_limit1,
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, PlatformProfileDriver,
+    TdpManagerCommand, get_available_cpu_scaling_governors, get_cpu_boost_state,
+    get_cpu_scaling_governor, get_max_charge_level, platform_profile_driver, register_tdp_limit1,
+    unregister_tdp_limit1,
 };
 use crate::proxy::{
     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
@@ -66,7 +67,7 @@ use crate::session::{
 use crate::wifi::{
     WifiBackend, get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces,
 };
-use crate::{SerialOrderValidator, Service, try_read_to_string};
+use crate::{ArcMutexBox, SerialOrderValidator, Service, try_read_to_string};
 
 macro_rules! method {
     ($self:expr, $method:expr, $($args:expr),+) => {
@@ -165,13 +166,13 @@ struct FirmwareDebug1 {
 
 struct GpuPerformanceLevel1 {
     proxy: Proxy<'static>,
-    driver: Box<dyn GpuPerformanceLevelDriver>,
+    driver: ArcMutexBox<dyn GpuPerformanceLevelDriver>,
     order: SerialOrderValidator,
 }
 
 struct GpuPowerProfile1 {
     proxy: Proxy<'static>,
-    driver: Box<dyn GpuPowerProfileDriver>,
+    driver: ArcMutexBox<dyn GpuPowerProfileDriver>,
     order: SerialOrderValidator,
 }
 
@@ -201,6 +202,7 @@ struct Manager2 {
 struct PerformanceProfile1 {
     proxy: Proxy<'static>,
     tdp_limit_manager: Option<UnboundedSender<TdpManagerCommand>>,
+    driver: Arc<Mutex<Box<dyn PlatformProfileDriver>>>,
 }
 
 #[derive(RemoteManager)]
@@ -504,6 +506,8 @@ impl GpuPerformanceLevel1 {
     #[zbus(property(emits_changed_signal = "const"))]
     async fn available_gpu_performance_levels(&self) -> fdo::Result<Vec<String>> {
         self.driver
+            .lock()
+            .await
             .get_available_performance_levels()
             .await
             .inspect_err(|message| error!("Error getting GPU performance levels: {message}"))
@@ -513,7 +517,7 @@ impl GpuPerformanceLevel1 {
 
     #[zbus(property)]
     async fn gpu_performance_level(&self) -> fdo::Result<String> {
-        match self.driver.get_performance_level().await {
+        match self.driver.lock().await.get_performance_level().await {
             Ok(level) => Ok(level.to_string()),
             Err(e) => {
                 error!("Error getting GPU performance level: {e}");
@@ -543,6 +547,8 @@ impl GpuPerformanceLevel1 {
     #[zbus(property)]
     async fn manual_gpu_clock(&self) -> fdo::Result<u32> {
         self.driver
+            .lock()
+            .await
             .get_clocks()
             .await
             .inspect_err(|message| error!("Error getting manual GPU clock: {message}"))
@@ -571,6 +577,8 @@ impl GpuPerformanceLevel1 {
     async fn manual_gpu_clock_min(&self) -> fdo::Result<u32> {
         Ok(*self
             .driver
+            .lock()
+            .await
             .get_clocks_range_for_performance_level(StandardGpuPerformanceLevel::Manual.into())
             .await
             .map_err(to_zbus_fdo_error)?
@@ -581,6 +589,8 @@ impl GpuPerformanceLevel1 {
     async fn manual_gpu_clock_max(&self) -> fdo::Result<u32> {
         Ok(*self
             .driver
+            .lock()
+            .await
             .get_clocks_range_for_performance_level(StandardGpuPerformanceLevel::Manual.into())
             .await
             .map_err(to_zbus_fdo_error)?
@@ -594,6 +604,8 @@ impl GpuPowerProfile1 {
     async fn available_gpu_power_profiles(&self) -> fdo::Result<Vec<String>> {
         let (_, names): (Vec<u32>, Vec<String>) = self
             .driver
+            .lock()
+            .await
             .get_available_power_profiles()
             .await
             .map_err(to_zbus_fdo_error)?
@@ -604,7 +616,7 @@ impl GpuPowerProfile1 {
 
     #[zbus(property)]
     async fn gpu_power_profile(&self) -> fdo::Result<String> {
-        match self.driver.get_power_profile().await {
+        match self.driver.lock().await.get_power_profile().await {
             Ok(profile) => Ok(profile.to_string()),
             Err(e) => {
                 error!("Error getting GPU power profile: {e}");
@@ -844,8 +856,9 @@ impl Manager2 {
 impl PerformanceProfile1 {
     #[zbus(property(emits_changed_signal = "const"))]
     async fn available_performance_profiles(&self) -> fdo::Result<Vec<String>> {
-        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
-        driver
+        self.driver
+            .lock()
+            .await
             .get_available_platform_profiles()
             .await
             .map_err(to_zbus_fdo_error)
@@ -853,8 +866,9 @@ impl PerformanceProfile1 {
 
     #[zbus(property)]
     async fn performance_profile(&self) -> fdo::Result<String> {
-        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
-        driver
+        self.driver
+            .lock()
+            .await
             .get_platform_profile()
             .await
             .map_err(to_zbus_fdo_error)
@@ -1788,15 +1802,11 @@ async fn create_device_interfaces(
         return Ok(());
     };
 
-    let performance_profile = PerformanceProfile1 {
-        proxy: proxy.clone(),
-        tdp_limit_manager: tdp_manager.clone(),
-    };
     let firmware_debug = FirmwareDebug1 {
         proxy: proxy.clone(),
     };
 
-    if let Some(manager) = tdp_manager {
+    if let Some(manager) = tdp_manager.clone() {
         let low_power_mode = LowPowerMode1 {
             manager: manager.clone(),
         };
@@ -1826,11 +1836,18 @@ async fn create_device_interfaces(
 
     if let Ok(driver) = platform_profile_driver().await
         && !driver
+            .lock()
+            .await
             .get_available_platform_profiles()
             .await
             .unwrap_or_default()
             .is_empty()
     {
+        let performance_profile = PerformanceProfile1 {
+            proxy: proxy.clone(),
+            tdp_limit_manager: tdp_manager.clone(),
+            driver,
+        };
         object_server.at(MANAGER_PATH, performance_profile).await?;
     }
 
