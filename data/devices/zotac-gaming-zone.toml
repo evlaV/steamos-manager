@@ -19,8 +19,10 @@ driver = "amdgpu"
 driver = "amdgpu"
 
 [performance_profile]
-platform_profile_name = "zotac_zone_platform"
 suggested_default = "custom"
+
+[performance_profile.driver.acpi]
+name = "zotac_zone_platform"
 
 [tdp_limit]
 method = "firmware_attribute"

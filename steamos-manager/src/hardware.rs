@@ -21,12 +21,12 @@ use tracing::{debug, error};
 use zbus::Connection;
 
 use crate::cec::HdmiCecHardware;
-use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
+use crate::gpu::{GpuPowerProfileDriverType, StandardGpuPerformanceLevel};
 use crate::path;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, TdpLimitingMethod,
-    find_hwmon,
+    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, CpuFreqRange,
+    TdpLimitingMethod, find_hwmon,
 };
 use crate::process::{run_script, script_exit_code};
 use crate::systemd::{JobMode, SystemdUnit};
@@ -126,6 +126,13 @@ pub(crate) struct BatteryChargeLimitConfig {
 }
 
 #[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CustomPerformanceProfile {
+    pub cpufreq: Vec<CpuFreqRange>,
+    #[serde(default)]
+    pub gpu_limits: HashMap<StandardGpuPerformanceLevel, OptionalRangeConfig<u32>>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
 pub(crate) struct DeviceMatch {
     pub dmi: Option<DmiMatch>,
     pub dt: Option<DeviceTreeMatch>,
@@ -159,8 +166,18 @@ pub(crate) struct FirmwareAttributeConfig {
 
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct GpuPerformanceConfig {
-    pub driver: GpuPerformanceLevelDriverType,
+    pub driver: GpuPerformanceDriverConfig,
     pub clocks: Option<RangeConfig<u32>>,
+    #[serde(default)]
+    pub limits: HashMap<String, OptionalRangeConfig<u32>>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GpuPerformanceDriverConfig {
+    Amdgpu,
+    Intel,
+    Devfreq { sysfs_path: PathBuf },
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -180,10 +197,27 @@ pub(crate) struct InputPlumberConfig {
     pub target_devices: Vec<InputPlumberTargetDevice>,
 }
 
+#[derive(Clone, Deserialize, Debug, Default)]
+pub(crate) struct OptionalRangeConfig<T: Clone> {
+    pub min: Option<T>,
+    pub max: Option<T>,
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct PerformanceProfileConfig {
     pub suggested_default: String,
-    pub platform_profile_name: String,
+    pub driver: PlatformProfileDriverConfig,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PlatformProfileDriverConfig {
+    Acpi {
+        name: String,
+    },
+    Custom {
+        profiles: HashMap<String, CustomPerformanceProfile>,
+    },
 }
 
 #[derive(Clone, Deserialize, Debug)]
