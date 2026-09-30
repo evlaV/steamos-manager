@@ -138,7 +138,9 @@ pub enum CPUBoostState {
     Enabled = 1,
 }
 
-async fn new_platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>> {
+async fn new_platform_profile_driver(
+    connection: Option<&Connection>,
+) -> Result<Box<dyn PlatformProfileDriver>> {
     let config = device_config().await?;
     let config = config
         .as_ref()
@@ -150,13 +152,19 @@ async fn new_platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>>
             Ok(Box::new(AcpiPlatformProfileDriver::new(name).await?))
         }
         PlatformProfileDriverConfig::Custom { profiles } => Ok(Box::new(
-            CustomPlatformProfileDriver::new(profiles, Some(config.suggested_default.clone()))
-                .await?,
+            CustomPlatformProfileDriver::new(
+                profiles,
+                Some(config.suggested_default.clone()),
+                connection,
+            )
+            .await?,
         )),
     }
 }
 
-pub(crate) async fn platform_profile_driver() -> Result<ArcMutexBox<dyn PlatformProfileDriver>> {
+pub(crate) async fn platform_profile_driver(
+    connection: Option<&Connection>,
+) -> Result<ArcMutexBox<dyn PlatformProfileDriver>> {
     #[cfg(not(test))]
     let once = &PLATFORM_PROFILE;
     #[cfg(test)]
@@ -164,7 +172,7 @@ pub(crate) async fn platform_profile_driver() -> Result<ArcMutexBox<dyn Platform
 
     let driver = once
         .get_or_try_init::<Error, _, _>(async || {
-            let driver = new_platform_profile_driver().await?;
+            let driver = new_platform_profile_driver(connection).await?;
             Ok(Arc::new(Mutex::new(driver)))
         })
         .await?;
@@ -229,12 +237,12 @@ pub(crate) async fn tdp_limit_manager(system: &Connection) -> Result<Box<dyn Tdp
                 Box::new(FirmwareAttributeLimitManager {
                     attribute: firmware_attribute.attribute.clone(),
                     performance_profile: firmware_attribute.performance_profile.clone(),
-                    platform_profile_driver: platform_profile_driver().await.ok(),
+                    platform_profile_driver: platform_profile_driver(Some(system)).await.ok(),
                 })
             }
             TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {
                 performance_profile: config.performance_profile.clone(),
-                platform_profile_driver: platform_profile_driver().await.ok(),
+                platform_profile_driver: platform_profile_driver(Some(system)).await.ok(),
             }),
             TdpLimitingMethod::RemoteInterface => Box::new(RemoteInterfaceLimitManager {
                 connection: system.clone(),
@@ -812,6 +820,7 @@ pub(crate) struct CustomPlatformProfileDriver {
     profiles: HashMap<String, CustomPerformanceProfile>,
     current_profile: Option<String>,
     gpu_performance_level_driver: Option<ArcMutexBox<dyn GpuPerformanceLevelDriver>>,
+    proxy: Option<RootManagerProxy<'static>>,
 }
 
 #[async_trait]
@@ -862,11 +871,18 @@ impl CustomPlatformProfileDriver {
     async fn new(
         profiles: &HashMap<String, CustomPerformanceProfile>,
         current_profile: Option<String>,
+        connection: Option<&Connection>,
     ) -> Result<Self> {
+        let proxy = if let Some(connection) = connection {
+            Some(RootManagerProxy::new(connection).await?)
+        } else {
+            None
+        };
         Ok(Self {
             profiles: profiles.clone(),
             current_profile,
             gpu_performance_level_driver: gpu_performance_level_driver().await.ok(),
+            proxy,
         })
     }
 }
@@ -878,10 +894,13 @@ impl PlatformProfileDriver for CustomPlatformProfileDriver {
     }
 
     async fn get_platform_profile(&self) -> Result<String> {
-        Ok(self
-            .current_profile
-            .clone()
-            .ok_or(anyhow!("No profile is currently set"))?)
+        Ok(if let Some(proxy) = self.proxy.as_ref() {
+            proxy.performance_profile().await?
+        } else {
+            self.current_profile
+                .clone()
+                .ok_or(anyhow!("No profile is currently set"))?
+        })
     }
 
     async fn set_platform_profile(&mut self, profile: &str) -> Result<()> {
