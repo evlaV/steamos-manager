@@ -84,7 +84,7 @@ impl SteamOSManager {
                 .await
                 .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
                 .ok(),
-            platform_profile: platform_profile_driver()
+            platform_profile: platform_profile_driver(None)
                 .await
                 .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
                 .ok(),
@@ -144,6 +144,11 @@ pub(crate) trait RootManager {
     fn hdmi_cec_phys_addr(&self) -> zbus::Result<u16>;
     #[zbus(property)]
     fn set_hdmi_cec_phys_addr(&self, phys_addr: u16) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn performance_profile(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn set_performance_profile(&self, profile: &str) -> zbus::Result<()>;
 }
 
 #[interface(name = "com.steampowered.SteamOSManager1.RootManager", spawn = false)]
@@ -728,7 +733,12 @@ impl SteamOSManager {
         Ok(())
     }
 
-    async fn set_performance_profile(&mut self, profile: &str) -> fdo::Result<()> {
+    #[zbus(property)]
+    async fn set_performance_profile(
+        &mut self,
+        profile: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
         let Some(driver) = self.platform_profile.as_mut() else {
             return Err(fdo::Error::Failed(String::from(
                 "Platform profile settings not configured",
@@ -738,6 +748,23 @@ impl SteamOSManager {
             .lock()
             .await
             .set_platform_profile(profile)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.performance_profile_changed(&ctx).await?;
+        Ok(())
+    }
+
+    #[zbus(property)]
+    async fn performance_profile(&self) -> fdo::Result<String> {
+        let Some(driver) = self.platform_profile.as_ref() else {
+            return Err(fdo::Error::Failed(String::from(
+                "Platform profile settings not configured",
+            )));
+        };
+        driver
+            .lock()
+            .await
+            .get_platform_profile()
             .await
             .map_err(to_zbus_fdo_error)
     }
