@@ -88,7 +88,7 @@ impl SteamOSManager {
                 .await
                 .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
                 .ok(),
-            gpu_performance_level: gpu_performance_level_driver()
+            gpu_performance_level: gpu_performance_level_driver(None)
                 .await
                 .inspect_err(|e| info!("Could not set up GPU performance management: {e}"))
                 .ok(),
@@ -149,6 +149,11 @@ pub(crate) trait RootManager {
     fn performance_profile(&self) -> zbus::Result<String>;
     #[zbus(property)]
     fn set_performance_profile(&self, profile: &str) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn gpu_performance_level(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn set_gpu_performance_level(&self, level: &str) -> zbus::Result<()>;
 }
 
 #[interface(name = "com.steampowered.SteamOSManager1.RootManager", spawn = false)]
@@ -509,12 +514,33 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)
     }
 
+    #[zbus(property)]
+    async fn gpu_performance_level(&self) -> fdo::Result<String> {
+        let Some(driver) = self.gpu_performance_level.as_ref() else {
+            return Err(fdo::Error::Failed(String::from(
+                "GPU performance settings not configured",
+            )));
+        };
+        Ok(driver
+            .lock()
+            .await
+            .get_performance_level()
+            .await
+            .inspect_err(|message| error!("Error setting GPU performance level: {message}"))
+            .map_err(to_zbus_fdo_error)?
+            .to_string())
+    }
+
+    #[zbus(property)]
     async fn set_gpu_performance_level(
         &mut self,
         level: &str,
-        #[zbus(header)] header: Header<'_>,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+        #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
-        if !self.order.check_header(header) {
+        if let Some(header) = header
+            && !self.order.check_header(header)
+        {
             debug!("SetGpuPerformanceLevel: discarding out of order serial");
             return Ok(());
         }
@@ -533,7 +559,8 @@ impl SteamOSManager {
             .set_performance_level(level)
             .await
             .inspect_err(|message| error!("Error setting GPU performance level: {message}"))
-            .map_err(to_zbus_fdo_error)
+            .map_err(to_zbus_fdo_error)?;
+        Ok(self.gpu_performance_level_changed(&ctx).await?)
     }
 
     async fn set_manual_gpu_clock(
@@ -1061,13 +1088,18 @@ mod test {
         default_path = "/com/steampowered/SteamOSManager1"
     )]
     trait GpuPerformanceLevel {
+        #[zbus(property)]
+        fn gpu_performance_level(&self) -> zbus::Result<String>;
+        #[zbus(property)]
         fn set_gpu_performance_level(&self, level: String) -> zbus::Result<()>;
     }
 
     #[tokio::test]
     async fn gpu_performance_level() {
         let test = start().await.expect("start");
-        let driver = gpu_performance_level_driver().await.unwrap();
+        let driver = gpu_performance_level_driver(Some(&test.connection))
+            .await
+            .unwrap();
 
         let name = test.connection.unique_name().unwrap();
         let proxy = GpuPerformanceLevelProxy::new(&test.connection, name.clone())

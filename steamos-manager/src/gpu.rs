@@ -23,8 +23,10 @@ use tokio::sync::Mutex;
 #[cfg(not(test))]
 use tokio::sync::OnceCell;
 use tracing::{debug, error};
+use zbus::Connection;
 
 use crate::hardware::{GpuPerformanceDriverConfig, device_config, device_type};
+use crate::manager::root::RootManagerProxy;
 use crate::power::find_hwmon;
 #[cfg(test)]
 use crate::testing;
@@ -239,6 +241,7 @@ struct DevfreqGpuPerformanceLevelDriver {
     sysfs_path: PathBuf,
     available_freqs: Vec<u64>,
     level: DevfreqPerformanceLevel,
+    proxy: Option<RootManagerProxy<'static>>,
 }
 
 #[async_trait]
@@ -288,7 +291,9 @@ pub(crate) async fn gpu_power_profile_driver() -> Result<ArcMutexBox<dyn GpuPowe
     Ok(driver.clone())
 }
 
-async fn new_gpu_performance_level_driver() -> Result<Box<dyn GpuPerformanceLevelDriver>> {
+async fn new_gpu_performance_level_driver(
+    connection: Option<&Connection>,
+) -> Result<Box<dyn GpuPerformanceLevelDriver>> {
     let config = device_config().await?;
     let config = config
         .as_ref()
@@ -299,13 +304,14 @@ async fn new_gpu_performance_level_driver() -> Result<Box<dyn GpuPerformanceLeve
         GpuPerformanceDriverConfig::Amdgpu => Box::new(AmdgpuPerformanceLevelDriver {}),
         GpuPerformanceDriverConfig::Intel => Box::new(IntelGpuPerformanceLevelDriver::new().await?),
         GpuPerformanceDriverConfig::Devfreq { .. } => {
-            Box::new(DevfreqGpuPerformanceLevelDriver::new().await?)
+            Box::new(DevfreqGpuPerformanceLevelDriver::new(connection).await?)
         }
     })
 }
 
-pub(crate) async fn gpu_performance_level_driver()
--> Result<ArcMutexBox<dyn GpuPerformanceLevelDriver>> {
+pub(crate) async fn gpu_performance_level_driver(
+    connection: Option<&Connection>,
+) -> Result<ArcMutexBox<dyn GpuPerformanceLevelDriver>> {
     #[cfg(not(test))]
     let once = &GPU_PERFORMANCE_LEVEL;
     #[cfg(test)]
@@ -313,7 +319,7 @@ pub(crate) async fn gpu_performance_level_driver()
 
     let driver = once
         .get_or_try_init::<Error, _, _>(async || {
-            let driver = new_gpu_performance_level_driver().await?;
+            let driver = new_gpu_performance_level_driver(connection).await?;
             Ok(Arc::new(Mutex::new(driver)))
         })
         .await?;
@@ -748,7 +754,7 @@ impl DevfreqGpuPerformanceLevelDriver {
     const MINIMUM_FREQ: &str = "min_freq";
     const MAXIMUM_FREQ: &str = "max_freq";
 
-    pub async fn new() -> Result<Self> {
+    pub async fn new(connection: Option<&Connection>) -> Result<Self> {
         let config = device_config().await?;
         let config = config
             .as_ref()
@@ -760,6 +766,11 @@ impl DevfreqGpuPerformanceLevelDriver {
         let available_freqs = fs::read_to_string(sysfs_path.join(Self::AVAILABLE_FREQ))
             .await
             .map_err(|message| anyhow!("Error opening sysfs file for reading: {message}"))?;
+        let proxy = if let Some(connection) = connection {
+            Some(RootManagerProxy::new(connection).await?)
+        } else {
+            None
+        };
         Ok(Self {
             sysfs_path: sysfs_path.clone(),
             available_freqs: available_freqs
@@ -768,6 +779,7 @@ impl DevfreqGpuPerformanceLevelDriver {
                 .sorted()
                 .collect(),
             level: DevfreqPerformanceLevel::Auto,
+            proxy,
         })
     }
 
@@ -804,7 +816,11 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn get_performance_level(&self) -> Result<GpuPerformanceLevel> {
-        Ok(GpuPerformanceLevel::Devfreq(self.level))
+        Ok(if let Some(proxy) = self.proxy.as_ref() {
+            self.performance_level_from_str(proxy.gpu_performance_level().await?.as_str())?
+        } else {
+            GpuPerformanceLevel::Devfreq(self.level)
+        })
     }
 
     async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
@@ -1815,7 +1831,7 @@ CCLK_RANGE in Core0:
 
         setup_devfreq(&h).await.expect("setup_devfreq");
 
-        let driver = DevfreqGpuPerformanceLevelDriver::new()
+        let driver = DevfreqGpuPerformanceLevelDriver::new(None)
             .await
             .expect("Devfreq driver creation");
 
@@ -1832,7 +1848,7 @@ CCLK_RANGE in Core0:
 
         setup_devfreq(&h).await.expect("setup_devfreq");
 
-        let mut driver = DevfreqGpuPerformanceLevelDriver::new()
+        let mut driver = DevfreqGpuPerformanceLevelDriver::new(None)
             .await
             .expect("Devfreq driver creation");
 

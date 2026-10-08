@@ -540,7 +540,10 @@ impl GpuPerformanceLevel1 {
             debug!("set GpuPerformanceLevel: discarding out of order serial");
             return Ok(());
         }
-        let _: () = self.proxy.call("SetGpuPerformanceLevel", &(level)).await?;
+        let _: () = self
+            .proxy
+            .set_property("GpuPerformanceLevel", &(level))
+            .await?;
         Ok(self.gpu_performance_level_changed(&ctx).await?)
     }
 
@@ -1986,7 +1989,7 @@ pub(crate) async fn create_interfaces(
         object_server.at(MANAGER_PATH, cpu_scheduler).await?;
     }
 
-    match gpu_performance_level_driver().await {
+    match gpu_performance_level_driver(Some(&system)).await {
         Ok(driver) => {
             object_server
                 .at(
