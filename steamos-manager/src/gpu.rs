@@ -90,6 +90,7 @@ pub enum GpuPerformanceLevel {
 #[strum(serialize_all = "snake_case")]
 pub enum StandardGpuPerformanceLevel {
     Auto,
+    Powersave,
     Manual,
 }
 
@@ -113,6 +114,7 @@ impl From<StandardGpuPerformanceLevel> for AmdgpuPerformanceLevel {
     fn from(level: StandardGpuPerformanceLevel) -> AmdgpuPerformanceLevel {
         match level {
             StandardGpuPerformanceLevel::Auto => AmdgpuPerformanceLevel::Auto,
+            StandardGpuPerformanceLevel::Powersave => AmdgpuPerformanceLevel::Low,
             StandardGpuPerformanceLevel::Manual => AmdgpuPerformanceLevel::Manual,
         }
     }
@@ -143,12 +145,17 @@ pub enum IntelPerformanceLevel {
     Manual,
 }
 
-impl From<StandardGpuPerformanceLevel> for IntelPerformanceLevel {
-    fn from(level: StandardGpuPerformanceLevel) -> IntelPerformanceLevel {
-        match level {
+impl TryFrom<StandardGpuPerformanceLevel> for IntelPerformanceLevel {
+    type Error = Error;
+
+    fn try_from(level: StandardGpuPerformanceLevel) -> Result<IntelPerformanceLevel> {
+        Ok(match level {
             StandardGpuPerformanceLevel::Auto => IntelPerformanceLevel::Auto,
             StandardGpuPerformanceLevel::Manual => IntelPerformanceLevel::Manual,
-        }
+            StandardGpuPerformanceLevel::Powersave => {
+                bail!("This is not an Intel-compatible performance level")
+            }
+        })
     }
 }
 
@@ -162,11 +169,11 @@ impl TryFrom<GpuPerformanceLevel> for IntelPerformanceLevel {
     type Error = Error;
 
     fn try_from(level: GpuPerformanceLevel) -> Result<IntelPerformanceLevel> {
-        Ok(match level {
-            GpuPerformanceLevel::Standard(level) => level.into(),
-            GpuPerformanceLevel::Intel(level) => level,
+        match level {
+            GpuPerformanceLevel::Standard(level) => level.try_into(),
+            GpuPerformanceLevel::Intel(level) => Ok(level),
             _ => bail!("This is not an Intel-compatible performance level"),
-        })
+        }
     }
 }
 
@@ -174,6 +181,7 @@ impl TryFrom<GpuPerformanceLevel> for IntelPerformanceLevel {
 #[strum(serialize_all = "snake_case")]
 pub enum DevfreqPerformanceLevel {
     Auto,
+    Powersave,
     Manual,
 }
 
@@ -181,6 +189,7 @@ impl From<StandardGpuPerformanceLevel> for DevfreqPerformanceLevel {
     fn from(level: StandardGpuPerformanceLevel) -> DevfreqPerformanceLevel {
         match level {
             StandardGpuPerformanceLevel::Auto => DevfreqPerformanceLevel::Auto,
+            StandardGpuPerformanceLevel::Powersave => DevfreqPerformanceLevel::Powersave,
             StandardGpuPerformanceLevel::Manual => DevfreqPerformanceLevel::Manual,
         }
     }
@@ -922,10 +931,19 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn get_available_performance_levels(&self) -> Result<Vec<GpuPerformanceLevel>> {
-        Ok(vec![
+        let mut levels = vec![
             GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto),
             GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Manual),
-        ])
+        ];
+        if self
+            .limits
+            .contains_key(&DevfreqPerformanceLevel::Powersave)
+        {
+            levels.push(GpuPerformanceLevel::Devfreq(
+                DevfreqPerformanceLevel::Powersave,
+            ));
+        }
+        Ok(levels)
     }
 
     async fn get_performance_level(&self) -> Result<GpuPerformanceLevel> {
@@ -942,7 +960,7 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
             .get_clocks_range_for_performance_level(GpuPerformanceLevel::Devfreq(level))
             .await?;
         match level {
-            DevfreqPerformanceLevel::Auto => {
+            DevfreqPerformanceLevel::Auto | DevfreqPerformanceLevel::Powersave => {
                 self.write_value(Self::MINIMUM_FREQ, &(range.start().to_string() + "000000"))
                     .await?;
                 self.write_value(Self::MAXIMUM_FREQ, &(range.end().to_string() + "000000"))
@@ -984,7 +1002,7 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
 
     async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
         self.saved_manual_clocks = Some(clocks);
-        if self.level == DevfreqPerformanceLevel::Auto {
+        if self.level != DevfreqPerformanceLevel::Manual {
             return Ok(());
         }
 
@@ -1015,6 +1033,13 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
         level: GpuPerformanceLevel,
     ) -> Result<RangeInclusive<u32>> {
         let level: DevfreqPerformanceLevel = level.try_into()?;
+        if level == DevfreqPerformanceLevel::Powersave
+            && !self
+                .limits
+                .contains_key(&DevfreqPerformanceLevel::Powersave)
+        {
+            bail!("Unsupported performance level {level}");
+        }
         let limits = self.limits.get(&level).cloned().unwrap_or_default();
         let sys_range = self.get_clocks_range().await?;
         let min = limits.min.unwrap_or(*sys_range.start());
@@ -1031,6 +1056,7 @@ pub(crate) mod test {
     use crate::power::HWMON_PREFIX;
     use crate::testing::{self, TestHandle};
     use crate::{enum_roundtrip, path};
+    use std::collections::HashSet;
     use tokio::fs::{create_dir_all, read_to_string, write};
 
     #[derive(Debug, Default, Clone)]
@@ -2049,6 +2075,52 @@ CCLK_RANGE in Core0:
     }
 
     #[tokio::test]
+    async fn test_devfreq_gpu_clocks_range_powersave() {
+        let h = testing::start();
+
+        setup_devfreq(&h).await.expect("setup_devfreq");
+        let mut config = device_config().await.unwrap().unwrap();
+        let Some(mut gpu_performance) = config.gpu_performance.take() else {
+            panic!();
+        };
+        gpu_performance.limits.insert(
+            DevfreqPerformanceLevel::Powersave.to_string(),
+            OptionalRangeConfig {
+                min: None,
+                max: Some(600),
+            },
+        );
+        config.gpu_performance = Some(gpu_performance);
+        h.test.set_device_config(config).await;
+
+        let driver = DevfreqGpuPerformanceLevelDriver::new(None)
+            .await
+            .expect("Devfreq driver creation");
+
+        let levels = HashSet::<GpuPerformanceLevel>::from_iter(
+            driver
+                .get_available_performance_levels()
+                .await
+                .unwrap()
+                .into_iter(),
+        );
+        assert_eq!(
+            levels,
+            HashSet::from_iter([
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto),
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Powersave),
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Manual)
+            ])
+        );
+
+        let range = driver
+            .get_clocks_range_for_performance_level(DevfreqPerformanceLevel::Powersave.into())
+            .await
+            .expect("get_clocks_range");
+        assert_eq!(range, 500..=600);
+    }
+
+    #[tokio::test]
     async fn test_devfreq_gpu_clocks_range() {
         let h = testing::start();
 
@@ -2057,6 +2129,21 @@ CCLK_RANGE in Core0:
         let driver = DevfreqGpuPerformanceLevelDriver::new(None)
             .await
             .expect("Devfreq driver creation");
+
+        let levels = HashSet::<GpuPerformanceLevel>::from_iter(
+            driver
+                .get_available_performance_levels()
+                .await
+                .unwrap()
+                .into_iter(),
+        );
+        assert_eq!(
+            levels,
+            HashSet::from_iter([
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto),
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Manual)
+            ])
+        );
 
         let range = driver.get_clocks_range().await.expect("get_clocks_range");
         assert_eq!(range, 500..=1000);
@@ -2075,6 +2162,13 @@ CCLK_RANGE in Core0:
             .await
             .expect("get_clocks_range");
         assert_eq!(range, 600..=800);
+
+        assert!(
+            driver
+                .get_clocks_range_for_performance_level(DevfreqPerformanceLevel::Powersave.into())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
