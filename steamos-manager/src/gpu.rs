@@ -219,13 +219,16 @@ pub enum GpuPerformanceLevelDriverType {
 #[derive(Debug)]
 struct AmdgpuPowerProfileDriver {}
 
-#[derive(Debug)]
-struct AmdgpuPerformanceLevelDriver {}
+#[derive(Debug, Default)]
+struct AmdgpuPerformanceLevelDriver {
+    saved_manual_clocks: Option<u32>,
+}
 
 #[derive(Debug)]
 struct IntelGpuPerformanceLevelDriver {
     card_path: PathBuf,
     config: IntelGpuConfig,
+    saved_manual_clocks: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -241,6 +244,7 @@ struct DevfreqGpuPerformanceLevelDriver {
     sysfs_path: PathBuf,
     available_freqs: Vec<u64>,
     level: DevfreqPerformanceLevel,
+    saved_manual_clocks: Option<u32>,
     proxy: Option<RootManagerProxy<'static>>,
 }
 
@@ -301,7 +305,7 @@ async fn new_gpu_performance_level_driver(
         .ok_or(anyhow!("No GPU power profile driver configured"))?;
 
     Ok(match &config.driver {
-        GpuPerformanceDriverConfig::Amdgpu => Box::new(AmdgpuPerformanceLevelDriver {}),
+        GpuPerformanceDriverConfig::Amdgpu => Box::new(AmdgpuPerformanceLevelDriver::default()),
         GpuPerformanceDriverConfig::Intel => Box::new(IntelGpuPerformanceLevelDriver::new().await?),
         GpuPerformanceDriverConfig::Devfreq { .. } => {
             Box::new(DevfreqGpuPerformanceLevelDriver::new(connection).await?)
@@ -483,8 +487,14 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
 
     async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
         let level: AmdgpuPerformanceLevel = level.try_into()?;
-        let level: String = level.to_string();
-        Self::write_sysfs_contents(Self::PERFORMANCE_LEVEL_SUFFIX, level.as_bytes()).await
+        Self::write_sysfs_contents(Self::PERFORMANCE_LEVEL_SUFFIX, level.to_string().as_bytes())
+            .await?;
+        if let Some(clocks) = self.saved_manual_clocks
+            && level == AmdgpuPerformanceLevel::Manual
+        {
+            self.set_clocks(clocks).await?;
+        }
+        Ok(())
     }
 
     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>> {
@@ -523,6 +533,7 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
     async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
         // Set GPU clocks to given value valid
         // Only used when GPU Performance Level is manual, but write whenever called.
+        self.saved_manual_clocks = Some(clocks);
         let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
         let mut myfile = File::create(base.join(Self::CLOCKS_SUFFIX))
             .await
@@ -601,7 +612,11 @@ impl IntelGpuConfig {
 impl IntelGpuPerformanceLevelDriver {
     pub async fn new() -> Result<Self> {
         let (card_path, config) = Self::detect_gpu_info().await?;
-        Ok(Self { card_path, config })
+        Ok(Self {
+            card_path,
+            config,
+            saved_manual_clocks: None,
+        })
     }
 
     // DG2 cards and below are compatible with both i915 (default)
@@ -703,12 +718,17 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
             }
             IntelPerformanceLevel::Manual => {
                 // For Manual mode, we need to ensure min_freq == max_freq
-                let range_min = self.read_freq(self.config.range_min).await?;
-                let range_max = self.read_freq(self.config.range_max).await?;
-                let mean_freq = (range_min + range_max) / 2;
+                let freq;
+                if let Some(clocks) = self.saved_manual_clocks {
+                    freq = clocks;
+                } else {
+                    let range_min = self.read_freq(self.config.range_min).await?;
+                    let range_max = self.read_freq(self.config.range_max).await?;
+                    freq = (range_min + range_max) / 2;
+                }
 
-                self.write_freq(self.config.min_freq, mean_freq).await?;
-                self.write_freq(self.config.max_freq, mean_freq).await
+                self.write_freq(self.config.min_freq, freq).await?;
+                self.write_freq(self.config.max_freq, freq).await
             }
         }
     }
@@ -736,6 +756,7 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
 
     async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
         let current_level = self.get_performance_level().await?;
+        self.saved_manual_clocks = Some(clocks);
 
         if current_level == GpuPerformanceLevel::Intel(IntelPerformanceLevel::Auto) {
             return Ok(());
@@ -780,6 +801,7 @@ impl DevfreqGpuPerformanceLevelDriver {
                 .collect(),
             level: DevfreqPerformanceLevel::Auto,
             proxy,
+            saved_manual_clocks: None,
         })
     }
 
@@ -836,9 +858,11 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
                     .await?;
             }
             DevfreqPerformanceLevel::Manual => {
-                let mean = (range.start() + range.end()) / 2;
+                let freq = self
+                    .saved_manual_clocks
+                    .unwrap_or((range.start() + range.end()) / 2);
                 self.level = level; // set_clocks checks for this so we need to set it in advance
-                self.set_clocks(mean).await?;
+                self.set_clocks(freq).await?;
             }
         }
 
@@ -868,6 +892,7 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
     }
 
     async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
+        self.saved_manual_clocks = Some(clocks);
         if self.level == DevfreqPerformanceLevel::Auto {
             return Ok(());
         }
@@ -1066,7 +1091,7 @@ CCLK_RANGE in Core0:
     #[tokio::test]
     async fn test_get_gpu_performance_level() {
         let _h = testing::start();
-        let driver = AmdgpuPerformanceLevelDriver {};
+        let driver = AmdgpuPerformanceLevelDriver::default();
 
         setup_amdgpu().await.expect("setup_amdgpu");
         let base = find_hwmon(AMDGPU_HWMON_NAME).await.unwrap();
@@ -1112,7 +1137,7 @@ CCLK_RANGE in Core0:
     #[tokio::test]
     async fn test_set_gpu_performance_level() {
         let _h = testing::start();
-        let mut driver = AmdgpuPerformanceLevelDriver {};
+        let mut driver = AmdgpuPerformanceLevelDriver::default();
 
         setup_amdgpu().await.expect("setup_amdgpu");
         let base = find_hwmon(AMDGPU_HWMON_NAME).await.unwrap();
@@ -1165,7 +1190,7 @@ CCLK_RANGE in Core0:
     #[tokio::test]
     async fn test_get_amdgpu_gpu_clocks() {
         let _h = testing::start();
-        let driver = AmdgpuPerformanceLevelDriver {};
+        let driver = AmdgpuPerformanceLevelDriver::default();
 
         assert!(driver.get_clocks().await.is_err());
         setup_amdgpu().await.expect("setup_amdgpu");
@@ -1186,7 +1211,7 @@ CCLK_RANGE in Core0:
     #[tokio::test]
     async fn test_set_amdgpu_gpu_clocks() {
         let _h = testing::start();
-        let mut driver = AmdgpuPerformanceLevelDriver {};
+        let mut driver = AmdgpuPerformanceLevelDriver::default();
 
         assert!(driver.set_clocks(1600).await.is_err());
         setup_amdgpu().await.expect("setup_amdgpu");
@@ -1202,7 +1227,7 @@ CCLK_RANGE in Core0:
     #[tokio::test]
     async fn test_get_amdgpu_gpu_clocks_range() {
         let _h = testing::start();
-        let driver = AmdgpuPerformanceLevelDriver {};
+        let driver = AmdgpuPerformanceLevelDriver::default();
 
         setup_amdgpu().await.expect("setup_amdgpu");
         let base = find_hwmon(AMDGPU_HWMON_NAME).await.unwrap();
@@ -1826,6 +1851,70 @@ CCLK_RANGE in Core0:
     }
 
     #[tokio::test]
+    async fn test_intel_gpu_set_clocks_latching() {
+        let _h = testing::start();
+
+        setup_intel_i915().await.expect("setup_intel_i915");
+
+        let mut driver = IntelGpuPerformanceLevelDriver::new()
+            .await
+            .expect("Intel driver creation");
+
+        driver.set_clocks(800).await.expect("set_clocks");
+
+        let min_freq = read_to_string(
+            path(DRM_PREFIX)
+                .join("card0")
+                .join(IntelGpuConfig::I915.min_freq),
+        )
+        .await
+        .expect("read min_freq")
+        .trim()
+        .parse::<u32>()
+        .expect("parse min_freq");
+        let max_freq = read_to_string(
+            path(DRM_PREFIX)
+                .join("card0")
+                .join(IntelGpuConfig::I915.max_freq),
+        )
+        .await
+        .expect("read max_freq")
+        .trim()
+        .parse::<u32>()
+        .expect("parse max_freq");
+        assert_ne!(min_freq, 800);
+        assert_ne!(max_freq, 800);
+
+        driver
+            .set_performance_level(GpuPerformanceLevel::Intel(IntelPerformanceLevel::Manual))
+            .await
+            .expect("set manual mode");
+
+        let min_freq = read_to_string(
+            path(DRM_PREFIX)
+                .join("card0")
+                .join(IntelGpuConfig::I915.min_freq),
+        )
+        .await
+        .expect("read min_freq")
+        .trim()
+        .parse::<u32>()
+        .expect("parse min_freq");
+        let max_freq = read_to_string(
+            path(DRM_PREFIX)
+                .join("card0")
+                .join(IntelGpuConfig::I915.max_freq),
+        )
+        .await
+        .expect("read max_freq")
+        .trim()
+        .parse::<u32>()
+        .expect("parse max_freq");
+        assert_eq!(min_freq, 800);
+        assert_eq!(max_freq, 800);
+    }
+
+    #[tokio::test]
     async fn test_devfreq_gpu_clocks_range() {
         let h = testing::start();
 
@@ -1859,7 +1948,7 @@ CCLK_RANGE in Core0:
             .await
             .expect("set manual mode");
 
-        driver.set_clocks(1000).await.expect("set_clocks");
+        driver.set_clocks(800).await.expect("set_clocks");
 
         let min_freq =
             read_to_string(path("devfreq").join(DevfreqGpuPerformanceLevelDriver::MINIMUM_FREQ))
@@ -1877,7 +1966,65 @@ CCLK_RANGE in Core0:
                 .parse::<u64>()
                 .expect("parse max_freq")
                 / 1_000_000u64;
-        assert_eq!(min_freq, 1000);
-        assert_eq!(max_freq, 1000);
+        assert_eq!(min_freq, 800);
+        assert_eq!(max_freq, 800);
+    }
+
+    #[tokio::test]
+    async fn test_devfreq_gpu_set_clocks_latching() {
+        let h = testing::start();
+
+        setup_devfreq(&h).await.expect("setup_devfreq");
+
+        let mut driver = DevfreqGpuPerformanceLevelDriver::new(None)
+            .await
+            .expect("Devfreq driver creation");
+
+        driver.set_clocks(800).await.expect("set_clocks");
+
+        let min_freq =
+            read_to_string(path("devfreq").join(DevfreqGpuPerformanceLevelDriver::MINIMUM_FREQ))
+                .await
+                .expect("read min_freq")
+                .trim()
+                .parse::<u64>()
+                .expect("parse min_freq")
+                / 1_000_000u64;
+        let max_freq =
+            read_to_string(path("devfreq").join(DevfreqGpuPerformanceLevelDriver::MAXIMUM_FREQ))
+                .await
+                .expect("read max_freq")
+                .trim()
+                .parse::<u64>()
+                .expect("parse max_freq")
+                / 1_000_000u64;
+        assert_ne!(min_freq, 800);
+        assert_ne!(max_freq, 800);
+
+        driver
+            .set_performance_level(GpuPerformanceLevel::Devfreq(
+                DevfreqPerformanceLevel::Manual,
+            ))
+            .await
+            .expect("set manual mode");
+
+        let min_freq =
+            read_to_string(path("devfreq").join(DevfreqGpuPerformanceLevelDriver::MINIMUM_FREQ))
+                .await
+                .expect("read min_freq")
+                .trim()
+                .parse::<u64>()
+                .expect("parse min_freq")
+                / 1_000_000u64;
+        let max_freq =
+            read_to_string(path("devfreq").join(DevfreqGpuPerformanceLevelDriver::MAXIMUM_FREQ))
+                .await
+                .expect("read max_freq")
+                .trim()
+                .parse::<u64>()
+                .expect("parse max_freq")
+                / 1_000_000u64;
+        assert_eq!(min_freq, 800);
+        assert_eq!(max_freq, 800);
     }
 }
