@@ -5,41 +5,54 @@
  * SPDX-License-Identifier: MIT
  */
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Error, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use nix::errno::Errno;
 use num_enum::TryFromPrimitive;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::fmt::Debug;
 use std::num::NonZeroU32;
 use std::ops::RangeInclusive;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use strum::{Display, EnumIter, EnumString, VariantNames};
 use tokio::fs::{self, File, read_dir, read_to_string, try_exists};
 use tokio::io::{AsyncWriteExt, ErrorKind, Interest};
 use tokio::net::unix::pipe;
+#[cfg(not(test))]
+use tokio::sync::OnceCell;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
+use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 use zbus::names::OwnedBusName;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, ObjectServer, fdo};
 
+use crate::daemon::is_root;
 use crate::error::{to_zbus_error, to_zbus_fdo_error};
-use crate::gpu::AMDGPU_HWMON_NAME;
-use crate::hardware::{FanControlState, device_config};
+use crate::gpu::{
+    AMDGPU_HWMON_NAME, GpuPerformanceLevel, GpuPerformanceLevelDriver, gpu_performance_level_driver,
+};
+use crate::hardware::{
+    CustomPerformanceProfile, FanControlState, OptionalRangeConfig, PlatformProfileDriverConfig,
+    device_config,
+};
 use crate::manager::MANAGER_PATH;
 use crate::manager::root::RootManagerProxy;
 use crate::manager::user::TdpLimit1;
 use crate::proxy::TdpLimit1Proxy;
 use crate::sysfs::{SysfsWritten, find_sysdir, sysfs_queued_write};
 use crate::systemd::{EnableState, JobMode, SystemdUnit};
+#[cfg(test)]
+use crate::testing;
 use crate::{
-    SerialOrderValidator, Service, path, session_connection, system_connection, write_synced,
+    ArcMutexBox, SerialOrderValidator, Service, path, session_connection, system_connection,
+    write_synced,
 };
 
 #[cfg(not(test))]
@@ -59,6 +72,9 @@ const CPU_POLICY_NAME: &str = "policy";
 const CPU_SCALING_GOVERNOR_SUFFIX: &str = "scaling_governor";
 const CPU_SCALING_AVAILABLE_GOVERNORS_SUFFIX: &str = "scaling_available_governors";
 
+const CPU_SCALING_MAX_FREQ_SUFFIX: &str = "scaling_max_freq";
+const CPU_SCALING_MIN_FREQ_SUFFIX: &str = "scaling_min_freq";
+
 const LAVD_PATH: &str = "/usr/bin/scx_lavd";
 
 const PLATFORM_PROFILE_PREFIX: &str = "/sys/class/platform-profile";
@@ -75,6 +91,9 @@ const SB_PATHS: &[&str] = &[
 const SB_PATHS: &[&str] = &["power_supply", "power_supply_legacy"];
 pub const BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT: i32 = 10;
 const SB_LIMIT_PATH: &str = "charge_control_end_threshold";
+
+#[cfg(not(test))]
+static PLATFORM_PROFILE: OnceCell<ArcMutexBox<dyn PlatformProfileDriver>> = OnceCell::const_new();
 
 #[derive(Display, EnumString, Hash, Eq, PartialEq, Debug, Copy, Clone)]
 #[strum(serialize_all = "lowercase")]
@@ -125,6 +144,39 @@ pub enum CPUBoostState {
     Enabled = 1,
 }
 
+async fn new_platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>> {
+    let config = device_config().await?;
+    let config = config
+        .as_ref()
+        .and_then(|device_config| device_config.performance_profile.as_ref())
+        .ok_or(anyhow!("No platform profile driver configured"))?;
+
+    match &config.driver {
+        PlatformProfileDriverConfig::Acpi { name } => {
+            Ok(Box::new(AcpiPlatformProfileDriver::new(name).await?))
+        }
+        PlatformProfileDriverConfig::Custom { profiles } => Ok(Box::new(
+            CustomPlatformProfileDriver::new(profiles, Some(config.suggested_default.clone()))
+                .await?,
+        )),
+    }
+}
+
+pub(crate) async fn platform_profile_driver() -> Result<ArcMutexBox<dyn PlatformProfileDriver>> {
+    #[cfg(not(test))]
+    let once = &PLATFORM_PROFILE;
+    #[cfg(test)]
+    let once = &testing::current().platform_profile_driver;
+
+    let driver = once
+        .get_or_try_init::<Error, _, _>(async || {
+            let driver = new_platform_profile_driver().await?;
+            Ok(Arc::new(Mutex::new(driver)))
+        })
+        .await?;
+    Ok(driver.clone())
+}
+
 #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
@@ -137,12 +189,14 @@ pub enum TdpLimitingMethod {
 #[derive(Debug)]
 struct AmdgpuHwmonTdpLimitManager {
     performance_profile: Option<String>,
+    platform_profile_driver: Option<ArcMutexBox<dyn PlatformProfileDriver>>,
 }
 
 #[derive(Debug)]
 struct FirmwareAttributeLimitManager {
     attribute: String,
     performance_profile: Option<String>,
+    platform_profile_driver: Option<ArcMutexBox<dyn PlatformProfileDriver>>,
 }
 
 #[derive(Debug)]
@@ -182,10 +236,12 @@ pub(crate) async fn tdp_limit_manager() -> Result<Box<dyn TdpLimitManager>> {
                 Box::new(FirmwareAttributeLimitManager {
                     attribute: firmware_attribute.attribute.clone(),
                     performance_profile: firmware_attribute.performance_profile.clone(),
+                    platform_profile_driver: platform_profile_driver().await.ok(),
                 })
             }
             TdpLimitingMethod::AmdgpuHwmon => Box::new(AmdgpuHwmonTdpLimitManager {
                 performance_profile: config.performance_profile.clone(),
+                platform_profile_driver: platform_profile_driver().await.ok(),
             }),
             TdpLimitingMethod::RemoteInterface => Box::new(RemoteInterfaceLimitManager {
                 connection,
@@ -245,6 +301,41 @@ async fn read_cpu_sysfs_contents<S: AsRef<Path>>(suffix: S) -> Result<String> {
     fs::read_to_string(base.join(suffix.as_ref()))
         .await
         .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct CpuFreqRange {
+    pub policy: u32,
+    #[serde(flatten)]
+    pub range: OptionalRangeConfig<u32>,
+}
+
+impl CpuFreqRange {
+    async fn write_sysfs_contents(self: &CpuFreqRange) -> Result<()> {
+        let base = path(CPU_PREFIX)
+            .join(CPUFREQ_PREFIX)
+            .join(format!("policy{}", self.policy));
+
+        if let Some(max) = self.range.max {
+            write_synced(
+                base.join(CPU_SCALING_MAX_FREQ_SUFFIX),
+                max.to_string().as_bytes(),
+            )
+            .await
+            .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
+        }
+
+        if let Some(min) = self.range.min {
+            write_synced(
+                base.join(CPU_SCALING_MIN_FREQ_SUFFIX),
+                min.to_string().as_bytes(),
+            )
+            .await
+            .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?;
+        }
+
+        Ok(())
+    }
 }
 
 async fn write_cpu_governor_sysfs_contents(contents: String) -> Result<()> {
@@ -438,10 +529,6 @@ pub(crate) async fn find_hwmon(hwmon: &str) -> Result<PathBuf> {
     find_sysdir(path(HWMON_PREFIX), hwmon).await
 }
 
-async fn find_platform_profile(name: &str) -> Result<PathBuf> {
-    find_sysdir(path(PLATFORM_PROFILE_PREFIX), name).await
-}
-
 #[async_trait]
 impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
     async fn get_tdp_limit(&self) -> Result<u32> {
@@ -495,12 +582,8 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
         let Some(ref performance_profile) = self.performance_profile else {
             return Ok(true);
         };
-        let config = device_config().await?;
-        if let Some(config) = config
-            .as_ref()
-            .and_then(|config| config.performance_profile.as_ref())
-        {
-            Ok(get_platform_profile(&config.platform_profile_name).await? == *performance_profile)
+        if let Some(driver) = &self.platform_profile_driver {
+            Ok(driver.lock().await.get_platform_profile().await? == *performance_profile)
         } else {
             Ok(true)
         }
@@ -598,12 +681,8 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
         let Some(ref performance_profile) = self.performance_profile else {
             return Ok(true);
         };
-        let config = device_config().await?;
-        if let Some(config) = config
-            .as_ref()
-            .and_then(|config| config.performance_profile.as_ref())
-        {
-            Ok(get_platform_profile(&config.platform_profile_name).await? == *performance_profile)
+        if let Some(driver) = &self.platform_profile_driver {
+            Ok(driver.lock().await.get_platform_profile().await? == *performance_profile)
         } else {
             Ok(true)
         }
@@ -728,31 +807,124 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
     sysfs_queued_write(path, data.as_bytes().to_owned()).await
 }
 
-pub(crate) async fn get_available_platform_profiles(name: &str) -> Result<Vec<String>> {
-    let base = find_platform_profile(name).await?;
-    Ok(fs::read_to_string(base.join("choices"))
-        .await
-        .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
-        .trim()
-        .split(' ')
-        .map(ToString::to_string)
-        .collect())
+#[derive(Debug)]
+pub(crate) struct AcpiPlatformProfileDriver {
+    path: PathBuf,
 }
 
-pub(crate) async fn get_platform_profile(name: &str) -> Result<String> {
-    let base = find_platform_profile(name).await?;
-    Ok(fs::read_to_string(base.join("profile"))
-        .await
-        .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
-        .trim()
-        .to_string())
+#[derive(Debug)]
+pub(crate) struct CustomPlatformProfileDriver {
+    profiles: HashMap<String, CustomPerformanceProfile>,
+    current_profile: Option<String>,
+    proxy: Option<RootManagerProxy<'static>>,
+    gpu_performance_level_driver: Option<ArcMutexBox<dyn GpuPerformanceLevelDriver>>,
+    saved_gpu_performance_level: Option<GpuPerformanceLevel>,
 }
 
-pub(crate) async fn set_platform_profile(name: &str, profile: &str) -> Result<()> {
-    let base = find_platform_profile(name).await?;
-    fs::write(base.join("profile"), profile.as_bytes())
-        .await
-        .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
+#[async_trait]
+pub(crate) trait PlatformProfileDriver: Send + Sync + Debug {
+    // This can be used from the user and root managers
+    async fn get_available_platform_profiles(&self) -> Result<Vec<String>>;
+    // This can be used from the user and root managers
+    async fn get_platform_profile(&self) -> Result<String>;
+    // This can only be used from the root manager
+    async fn set_platform_profile(&mut self, profile: &str) -> Result<()>;
+}
+
+impl AcpiPlatformProfileDriver {
+    async fn new(name: &str) -> Result<Self> {
+        let path = find_sysdir(path(PLATFORM_PROFILE_PREFIX), name).await?;
+        Ok(Self { path })
+    }
+}
+
+#[async_trait]
+impl PlatformProfileDriver for AcpiPlatformProfileDriver {
+    async fn get_available_platform_profiles(&self) -> Result<Vec<String>> {
+        Ok(fs::read_to_string(self.path.join("choices"))
+            .await
+            .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
+            .trim()
+            .split(' ')
+            .map(ToString::to_string)
+            .collect())
+    }
+
+    async fn get_platform_profile(&self) -> Result<String> {
+        Ok(fs::read_to_string(self.path.join("profile"))
+            .await
+            .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
+            .trim()
+            .to_string())
+    }
+
+    async fn set_platform_profile(&mut self, profile: &str) -> Result<()> {
+        fs::write(self.path.join("profile"), profile.as_bytes())
+            .await
+            .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
+    }
+}
+
+impl CustomPlatformProfileDriver {
+    async fn new(
+        profiles: &HashMap<String, CustomPerformanceProfile>,
+        current_profile: Option<String>,
+    ) -> Result<Self> {
+        let proxy = if !is_root() {
+            let connection = system_connection().await?;
+            Some(RootManagerProxy::new(&connection).await?)
+        } else {
+            None
+        };
+        Ok(Self {
+            profiles: profiles.clone(),
+            current_profile,
+            proxy,
+            gpu_performance_level_driver: gpu_performance_level_driver().await.ok(),
+            saved_gpu_performance_level: None,
+        })
+    }
+}
+
+#[async_trait]
+impl PlatformProfileDriver for CustomPlatformProfileDriver {
+    async fn get_available_platform_profiles(&self) -> Result<Vec<String>> {
+        Ok(self.profiles.keys().cloned().collect())
+    }
+
+    async fn get_platform_profile(&self) -> Result<String> {
+        Ok(if let Some(proxy) = self.proxy.as_ref() {
+            proxy.performance_profile().await?
+        } else {
+            self.current_profile
+                .clone()
+                .ok_or(anyhow!("No profile is currently set"))?
+        })
+    }
+
+    async fn set_platform_profile(&mut self, profile: &str) -> Result<()> {
+        let Some(profile_info) = self.profiles.get(profile) else {
+            bail!("Unknown custom profile '{profile}'");
+        };
+        for cpufreq in &profile_info.cpufreq {
+            cpufreq.write_sysfs_contents().await?;
+        }
+        if let Some(driver) = &self.gpu_performance_level_driver {
+            let mut driver = driver.lock().await;
+            if let Some(new_level) = profile_info.gpu_performance_level.as_ref() {
+                let new_level = driver.performance_level_from_str(new_level)?;
+                if self.saved_gpu_performance_level.is_none() {
+                    self.saved_gpu_performance_level = Some(driver.get_performance_level().await?);
+                }
+                driver.set_performance_level(new_level).await?;
+            } else if let Some(old_level) = self.saved_gpu_performance_level {
+                driver.set_performance_level(old_level).await?;
+                self.saved_gpu_performance_level = None;
+            }
+        }
+        self.current_profile = Some(profile.to_string());
+        Ok(())
+    }
 }
 
 pub(crate) async fn register_tdp_limit1(
@@ -1045,12 +1217,15 @@ impl Service for TdpManagerService {
 pub(crate) mod test {
     use super::*;
     use anyhow::anyhow;
+    use std::collections::HashSet;
     use std::time::Duration;
     use tokio::fs::{create_dir_all, read_to_string, remove_dir, write};
     use tokio::sync::mpsc::{Sender, channel, unbounded_channel};
     use tokio::time::sleep;
     use zbus::{fdo, interface};
 
+    use crate::gpu::test::setup_devfreq_powersave;
+    use crate::gpu::{DevfreqPerformanceLevel, GpuPerformanceLevel};
     use crate::hardware::{
         BatteryChargeLimitConfig, DeviceConfig, FanSpeedConfig, FirmwareAttributeConfig,
         PerformanceProfileConfig, RangeConfig, TdpLimitConfig,
@@ -1549,7 +1724,7 @@ pub(crate) mod test {
         let _h = testing::start();
 
         assert!(
-            get_available_platform_profiles("power-driver")
+            AcpiPlatformProfileDriver::new("power-driver")
                 .await
                 .is_err()
         );
@@ -1557,7 +1732,7 @@ pub(crate) mod test {
         let base = path(PLATFORM_PROFILE_PREFIX).join("platform-profile0");
         create_dir_all(&base).await.unwrap();
         assert!(
-            get_available_platform_profiles("power-driver")
+            AcpiPlatformProfileDriver::new("power-driver")
                 .await
                 .is_err()
         );
@@ -1566,7 +1741,10 @@ pub(crate) mod test {
             .await
             .unwrap();
         assert!(
-            get_available_platform_profiles("power-driver")
+            AcpiPlatformProfileDriver::new("power-driver")
+                .await
+                .unwrap()
+                .get_available_platform_profiles()
                 .await
                 .is_err()
         );
@@ -1575,10 +1753,103 @@ pub(crate) mod test {
             .await
             .unwrap();
         assert_eq!(
-            get_available_platform_profiles("power-driver")
+            AcpiPlatformProfileDriver::new("power-driver")
+                .await
+                .unwrap()
+                .get_available_platform_profiles()
                 .await
                 .unwrap(),
             &["a", "b", "c"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cpufreq_write() {
+        let _h = testing::start();
+        let base = path(CPU_PREFIX).join(CPUFREQ_PREFIX);
+
+        create_dir_all(base.join("policy0")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 0,
+            range: OptionalRangeConfig {
+                min: None,
+                max: None,
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert!(
+            read_to_string(base.join(format!("policy0/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+        assert!(
+            read_to_string(base.join(format!("policy0/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+
+        create_dir_all(base.join("policy1")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 1,
+            range: OptionalRangeConfig {
+                min: Some(1),
+                max: None,
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert_eq!(
+            read_to_string(base.join(format!("policy1/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "1"
+        );
+        assert!(
+            read_to_string(base.join(format!("policy1/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+
+        create_dir_all(base.join("policy2")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 2,
+            range: OptionalRangeConfig {
+                min: None,
+                max: Some(2),
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert!(
+            read_to_string(base.join(format!("policy2/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            read_to_string(base.join(format!("policy2/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "2"
+        );
+
+        create_dir_all(base.join("policy3")).await.unwrap();
+        let range = CpuFreqRange {
+            policy: 3,
+            range: OptionalRangeConfig {
+                min: Some(3),
+                max: Some(4),
+            },
+        };
+        range.write_sysfs_contents().await.unwrap();
+        assert_eq!(
+            read_to_string(base.join(format!("policy3/{CPU_SCALING_MIN_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "3"
+        );
+        assert_eq!(
+            read_to_string(base.join(format!("policy3/{CPU_SCALING_MAX_FREQ_SUFFIX}")))
+                .await
+                .unwrap(),
+            "4"
         );
     }
 
@@ -1908,7 +2179,9 @@ pub(crate) mod test {
         _ = h.new_dbus().await.expect("new_dbus");
         let config = DeviceConfig {
             performance_profile: Some(PerformanceProfileConfig {
-                platform_profile_name: String::from("platform-profile0"),
+                driver: PlatformProfileDriverConfig::Acpi {
+                    name: String::from("platform-profile0"),
+                },
                 suggested_default: String::from("custom"),
             }),
             tdp_limit: Some(TdpLimitConfig {
@@ -2133,5 +2406,142 @@ pub(crate) mod test {
 
         manager.set_tdp_limit(2).await.unwrap_err();
         assert_eq!(manager.get_tdp_limit().await.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn test_custom_profile_binding() {
+        let h = testing::start();
+
+        setup_devfreq_powersave(&h).await.unwrap();
+
+        let mut config = device_config().await.unwrap().unwrap();
+        config.performance_profile = Some(PerformanceProfileConfig {
+            suggested_default: String::from("Performance"),
+            driver: PlatformProfileDriverConfig::Custom {
+                profiles: HashMap::from_iter([
+                    (
+                        String::from("Performance"),
+                        CustomPerformanceProfile {
+                            cpufreq: Vec::new(),
+                            gpu_performance_level: None,
+                        },
+                    ),
+                    (
+                        String::from("Powersave"),
+                        CustomPerformanceProfile {
+                            cpufreq: Vec::new(),
+                            gpu_performance_level: Some(String::from("powersave")),
+                        },
+                    ),
+                ]),
+            },
+        });
+        h.test.set_device_config(config).await;
+
+        let gpu_driver = gpu_performance_level_driver().await.unwrap();
+        let platform_profile_driver = platform_profile_driver().await.unwrap();
+
+        assert_eq!(
+            gpu_driver
+                .lock()
+                .await
+                .get_performance_level()
+                .await
+                .unwrap(),
+            GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto)
+        );
+        assert_eq!(
+            platform_profile_driver
+                .lock()
+                .await
+                .get_platform_profile()
+                .await
+                .unwrap(),
+            "Performance"
+        );
+
+        let levels = HashSet::<GpuPerformanceLevel>::from_iter(
+            gpu_driver
+                .lock()
+                .await
+                .get_available_performance_levels()
+                .await
+                .unwrap()
+                .into_iter(),
+        );
+        assert_eq!(
+            levels,
+            HashSet::from_iter([
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto),
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Powersave),
+                GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Manual)
+            ])
+        );
+
+        let levels = HashSet::<String>::from_iter(
+            platform_profile_driver
+                .lock()
+                .await
+                .get_available_platform_profiles()
+                .await
+                .unwrap()
+                .into_iter(),
+        );
+        assert_eq!(
+            levels,
+            HashSet::from_iter([String::from("Performance"), String::from("Powersave")])
+        );
+
+        platform_profile_driver
+            .lock()
+            .await
+            .set_platform_profile("Powersave")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            gpu_driver
+                .lock()
+                .await
+                .get_performance_level()
+                .await
+                .unwrap(),
+            GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Powersave)
+        );
+        assert_eq!(
+            platform_profile_driver
+                .lock()
+                .await
+                .get_platform_profile()
+                .await
+                .unwrap(),
+            "Powersave"
+        );
+
+        platform_profile_driver
+            .lock()
+            .await
+            .set_platform_profile("Performance")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            gpu_driver
+                .lock()
+                .await
+                .get_performance_level()
+                .await
+                .unwrap(),
+            GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto)
+        );
+        assert_eq!(
+            platform_profile_driver
+                .lock()
+                .await
+                .get_platform_profile()
+                .await
+                .unwrap(),
+            "Performance"
+        );
     }
 }

@@ -34,9 +34,9 @@ use crate::hardware::{
 use crate::job::JobManager;
 use crate::platform::{ServiceConfig, platform_config};
 use crate::power::{
-    CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, TdpLimitManager,
-    set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
-    tdp_limit_manager,
+    CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, PlatformProfileDriver,
+    TdpLimitManager, platform_profile_driver, set_cpu_boost_state, set_cpu_scaling_governor,
+    set_max_charge_level, tdp_limit_manager,
 };
 use crate::process::{run_script, script_exit_code, script_output};
 use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
@@ -46,7 +46,7 @@ use crate::wifi::{
     WifiBackend, WifiDebugMode, WifiPowerManagement, extract_wifi_trace, generate_wifi_dump,
     set_wifi_backend, set_wifi_debug_mode, set_wifi_power_management_state,
 };
-use crate::{SerialOrderValidator, path};
+use crate::{ArcMutexBox, SerialOrderValidator, path};
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 #[repr(u32)]
@@ -64,8 +64,9 @@ pub struct SteamOSManager {
     wifi_debug_mode: WifiDebugMode,
     fan_control: FanControl,
     tdp_limit_manager: Option<Box<dyn TdpLimitManager>>,
-    gpu_performance_level: Option<Box<dyn GpuPerformanceLevelDriver>>,
-    gpu_power_profile: Option<Box<dyn GpuPowerProfileDriver>>,
+    platform_profile: Option<ArcMutexBox<dyn PlatformProfileDriver>>,
+    gpu_performance_level: Option<ArcMutexBox<dyn GpuPerformanceLevelDriver>>,
+    gpu_power_profile: Option<ArcMutexBox<dyn GpuPowerProfileDriver>>,
     job_manager: JobManager,
     cpu_scheduler_manager: CpuSchedulerManager<'static>,
     cec_hw: Option<Box<dyn HdmiCecHwController>>,
@@ -80,6 +81,10 @@ impl SteamOSManager {
             tdp_limit_manager: tdp_limit_manager()
                 .await
                 .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
+                .ok(),
+            platform_profile: platform_profile_driver()
+                .await
+                .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
                 .ok(),
             gpu_performance_level: gpu_performance_level_driver()
                 .await
@@ -135,6 +140,16 @@ pub(crate) trait RootManager {
     fn hdmi_cec_phys_addr(&self) -> zbus::Result<u16>;
     #[zbus(property)]
     fn set_hdmi_cec_phys_addr(&self, phys_addr: u16) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn performance_profile(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn set_performance_profile(&self, profile: &str) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn gpu_performance_level(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn set_gpu_performance_level(&self, level: &str) -> zbus::Result<()>;
 }
 
 #[interface(name = "com.steampowered.SteamOSManager1.RootManager", spawn = false)]
@@ -428,9 +443,13 @@ impl SteamOSManager {
             )));
         };
         let profile = driver
+            .lock()
+            .await
             .power_profile_from_str(value)
             .map_err(to_zbus_fdo_error)?;
         driver
+            .lock()
+            .await
             .set_power_profile(profile)
             .await
             .inspect_err(|message| error!("Error setting GPU power profile: {message}"))
@@ -491,12 +510,33 @@ impl SteamOSManager {
             .map_err(to_zbus_fdo_error)
     }
 
+    #[zbus(property)]
+    async fn gpu_performance_level(&self) -> fdo::Result<String> {
+        let Some(driver) = self.gpu_performance_level.as_ref() else {
+            return Err(fdo::Error::Failed(String::from(
+                "GPU performance settings not configured",
+            )));
+        };
+        Ok(driver
+            .lock()
+            .await
+            .get_performance_level()
+            .await
+            .inspect_err(|message| error!("Error setting GPU performance level: {message}"))
+            .map_err(to_zbus_fdo_error)?
+            .to_string())
+    }
+
+    #[zbus(property)]
     async fn set_gpu_performance_level(
         &mut self,
         level: &str,
-        #[zbus(header)] header: Header<'_>,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+        #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
-        if !self.order.check_header(header) {
+        if let Some(header) = header
+            && !self.order.check_header(header)
+        {
             debug!("SetGpuPerformanceLevel: discarding out of order serial");
             return Ok(());
         }
@@ -505,15 +545,18 @@ impl SteamOSManager {
                 "GPU performance settings not configured",
             )));
         };
-        let level = match driver.performance_level_from_str(level) {
+        let level = match driver.lock().await.performance_level_from_str(level) {
             Ok(level) => level,
             Err(e) => return Err(to_zbus_fdo_error(e)),
         };
         driver
+            .lock()
+            .await
             .set_performance_level(level)
             .await
             .inspect_err(|message| error!("Error setting GPU performance level: {message}"))
-            .map_err(to_zbus_fdo_error)
+            .map_err(to_zbus_fdo_error)?;
+        Ok(self.gpu_performance_level_changed(&ctx).await?)
     }
 
     async fn set_manual_gpu_clock(
@@ -531,6 +574,8 @@ impl SteamOSManager {
             )));
         };
         driver
+            .lock()
+            .await
             .set_clocks(clocks)
             .await
             .inspect_err(|message| error!("Error setting manual GPU clock: {message}"))
@@ -707,15 +752,38 @@ impl SteamOSManager {
         Ok(())
     }
 
-    async fn set_performance_profile(&self, profile: &str) -> fdo::Result<()> {
-        let config = device_config().await.map_err(to_zbus_fdo_error)?;
-        let config = config
-            .as_ref()
-            .and_then(|config| config.performance_profile.as_ref())
-            .ok_or(fdo::Error::Failed(String::from(
-                "No performance platform-profile configured",
-            )))?;
-        set_platform_profile(&config.platform_profile_name, profile)
+    #[zbus(property)]
+    async fn set_performance_profile(
+        &mut self,
+        profile: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        let Some(driver) = self.platform_profile.as_mut() else {
+            return Err(fdo::Error::Failed(String::from(
+                "Platform profile settings not configured",
+            )));
+        };
+        driver
+            .lock()
+            .await
+            .set_platform_profile(profile)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.performance_profile_changed(&ctx).await?;
+        Ok(())
+    }
+
+    #[zbus(property)]
+    async fn performance_profile(&self) -> fdo::Result<String> {
+        let Some(driver) = self.platform_profile.as_ref() else {
+            return Err(fdo::Error::Failed(String::from(
+                "Platform profile settings not configured",
+            )));
+        };
+        driver
+            .lock()
+            .await
+            .get_platform_profile()
             .await
             .map_err(to_zbus_fdo_error)
     }
@@ -1015,6 +1083,9 @@ mod test {
         default_path = "/com/steampowered/SteamOSManager1"
     )]
     trait GpuPerformanceLevel {
+        #[zbus(property)]
+        fn gpu_performance_level(&self) -> zbus::Result<String>;
+        #[zbus(property)]
         fn set_gpu_performance_level(&self, level: String) -> zbus::Result<()>;
     }
 
@@ -1034,7 +1105,7 @@ mod test {
             .await
             .expect("proxy_set");
         assert_eq!(
-            driver.get_performance_level().await.unwrap(),
+            driver.lock().await.get_performance_level().await.unwrap(),
             GpuPerformanceLevel::Amdgpu(AmdgpuPerformanceLevel::Low)
         );
 
