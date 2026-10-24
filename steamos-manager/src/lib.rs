@@ -122,18 +122,20 @@ impl<F: Format + Send + Sync + Debug, P: AsRef<Path> + Sized + Send + Sync + Deb
 
 #[derive(Debug, Default)]
 pub(crate) struct SerialOrderValidator {
-    serials: HashMap<UniqueName<'static>, NonZeroU32>,
+    serials: HashMap<(UniqueName<'static>, &'static str), NonZeroU32>,
 }
 
 impl SerialOrderValidator {
-    pub(crate) fn check_header(&mut self, header: Header<'_>) -> bool {
+    // Serials are tracked per setter, as calls to different setters from one
+    // sender may be dispatched out of order.
+    pub(crate) fn check_header(&mut self, header: Header<'_>, setter: &'static str) -> bool {
         let Some(conn) = header.sender() else {
             return false;
         };
 
         let serial = header.primary().serial_num();
 
-        match self.serials.entry(conn.to_owned()) {
+        match self.serials.entry((conn.to_owned(), setter)) {
             Entry::Vacant(v) => {
                 v.insert(serial);
             }
@@ -249,8 +251,46 @@ pub(crate) async fn read_config_directory<P: AsRef<Path> + Sync + Send>(
 
 #[cfg(test)]
 mod test {
-    use crate::testing;
+    use crate::{SerialOrderValidator, testing};
     use std::fs;
+    use std::num::NonZeroU32;
+    use zbus::Message;
+
+    fn setter_message(sender: &str, serial: u32) -> Message {
+        Message::method_call("/", "Set")
+            .sender(sender)
+            .serial(NonZeroU32::new(serial).unwrap())
+            .build(&())
+            .unwrap()
+    }
+
+    #[test]
+    fn serial_order_same_setter() {
+        let mut order = SerialOrderValidator::default();
+
+        assert!(order.check_header(setter_message(":1.1", 2).header(), "A"));
+        assert!(!order.check_header(setter_message(":1.1", 1).header(), "A"));
+        assert!(!order.check_header(setter_message(":1.1", 2).header(), "A"));
+        assert!(order.check_header(setter_message(":1.1", 3).header(), "A"));
+    }
+
+    #[test]
+    fn serial_order_different_setters() {
+        let mut order = SerialOrderValidator::default();
+
+        assert!(order.check_header(setter_message(":1.1", 2).header(), "A"));
+        assert!(order.check_header(setter_message(":1.1", 1).header(), "B"));
+        assert!(!order.check_header(setter_message(":1.1", 1).header(), "A"));
+    }
+
+    #[test]
+    fn serial_order_different_senders() {
+        let mut order = SerialOrderValidator::default();
+
+        assert!(order.check_header(setter_message(":1.1", 2).header(), "A"));
+        assert!(order.check_header(setter_message(":1.2", 1).header(), "A"));
+        assert!(!order.check_header(setter_message(":1.2", 1).header(), "A"));
+    }
 
     #[test]
     fn read_comm() {

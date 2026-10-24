@@ -342,7 +342,7 @@ impl BatteryChargeLimit1 {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if header
-            .map(|header| !self.order.check_header(header))
+            .map(|header| !self.order.check_header(header, "MaxChargeLevel"))
             .unwrap_or(true)
         {
             debug!("set MaxChargeLevel: discarding out of order serial");
@@ -414,7 +414,7 @@ impl CpuScaling1 {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if header
-            .map(|header| !self.order.check_header(header))
+            .map(|header| !self.order.check_header(header, "CpuScalingGovernor"))
             .unwrap_or(true)
         {
             debug!("set CpuScalingGovernor: discarding out of order serial");
@@ -448,7 +448,7 @@ impl CpuScheduler1 {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if header
-            .map(|header| !self.order.check_header(header))
+            .map(|header| !self.order.check_header(header, "CpuScheduler"))
             .unwrap_or(true)
         {
             debug!("set CpuScheduler: discarding out of order serial");
@@ -535,7 +535,7 @@ impl GpuPerformanceLevel1 {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if header
-            .map(|header| !self.order.check_header(header))
+            .map(|header| !self.order.check_header(header, "GpuPerformanceLevel"))
             .unwrap_or(true)
         {
             debug!("set GpuPerformanceLevel: discarding out of order serial");
@@ -567,7 +567,7 @@ impl GpuPerformanceLevel1 {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if header
-            .map(|header| !self.order.check_header(header))
+            .map(|header| !self.order.check_header(header, "ManualGpuClock"))
             .unwrap_or(true)
         {
             debug!("set ManualGpuClock: discarding out of order serial");
@@ -637,7 +637,7 @@ impl GpuPowerProfile1 {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if header
-            .map(|header| !self.order.check_header(header))
+            .map(|header| !self.order.check_header(header, "GpuPowerProfile"))
             .unwrap_or(true)
         {
             debug!("set GpuPowerProfile: discarding out of order serial");
@@ -1388,7 +1388,7 @@ impl TdpLimit1 {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if header
-            .map(|header| !self.order.check_header(header))
+            .map(|header| !self.order.check_header(header, "TdpLimit"))
             .unwrap_or(true)
         {
             debug!("set TdpLimit: discarding out of order serial");

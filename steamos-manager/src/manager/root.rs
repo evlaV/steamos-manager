@@ -432,7 +432,7 @@ impl SteamOSManager {
         value: &str,
         #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<()> {
-        if !self.order.check_header(header) {
+        if !self.order.check_header(header, "SetGpuPowerProfile") {
             debug!("SetGpuPowerProfile: discarding out of order serial");
             return Ok(());
         }
@@ -534,7 +534,7 @@ impl SteamOSManager {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> fdo::Result<()> {
         if let Some(header) = header
-            && !self.order.check_header(header)
+            && !self.order.check_header(header, "SetGpuPerformanceLevel")
         {
             debug!("SetGpuPerformanceLevel: discarding out of order serial");
             return Ok(());
@@ -563,7 +563,7 @@ impl SteamOSManager {
         clocks: u32,
         #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<()> {
-        if !self.order.check_header(header) {
+        if !self.order.check_header(header, "SetManualGpuClock") {
             debug!("SetManualGpuClock: discarding out of order serial");
             return Ok(());
         }
@@ -586,7 +586,7 @@ impl SteamOSManager {
         limit: u32,
         #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<()> {
-        if !self.order.check_header(header) {
+        if !self.order.check_header(header, "SetTdpLimit") {
             debug!("SetTdpLimit: discarding out of order serial");
             return Ok(());
         }
@@ -723,7 +723,7 @@ impl SteamOSManager {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<()> {
-        if !self.order.check_header(header) {
+        if !self.order.check_header(header, "SetMaxChargeLevel") {
             debug!("SetMaxChargeLevel: discarding out of order serial");
             return Ok(());
         }
