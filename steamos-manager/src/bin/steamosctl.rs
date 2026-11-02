@@ -17,9 +17,9 @@ use steamos_manager::hardware::{ECLoggingState, FactoryResetKind, FanControlStat
 use steamos_manager::power::{CPUBoostState, CPUScalingGovernor};
 use steamos_manager::proxy::{
     AmbientLightSensor1Proxy, BatteryChargeLimit1Proxy, CpuBoost1Proxy, CpuScaling1Proxy,
-    CpuScheduler1Proxy, FactoryReset1Proxy, FanControl1Proxy, FirmwareDebug1Proxy,
-    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy, HdmiCec2Proxy,
-    LowPowerMode1Proxy, Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy,
+    CpuScheduler1Proxy, DongleDebug1Proxy, FactoryReset1Proxy, FanControl1Proxy,
+    FirmwareDebug1Proxy, GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, HdmiCec1Proxy,
+    HdmiCec2Proxy, LowPowerMode1Proxy, Manager2Proxy, PerformanceProfile1Proxy, ScreenReader1Proxy,
     SessionManagement1Proxy, Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
     WifiBackend1Proxy, WifiDebug1Proxy, WifiDebugDump1Proxy, WifiPowerManagement1Proxy,
 };
@@ -66,6 +66,9 @@ enum Commands {
 
     /// Get the current state of EC logging
     GetEcLogging,
+
+    /// Reboot the Steam Machine internal dongle
+    RebootDongle,
 
     /// Get the available CPU scaling governors supported on this device
     GetAvailableCpuScalingGovernors,
@@ -512,6 +515,10 @@ async fn main() -> Result<()> {
                 Ok(s) => println!("Ec logging state: {s}"),
                 Err(_) => println!("Got unknown value {state} from backend"),
             }
+        }
+        Commands::RebootDongle => {
+            let proxy = DongleDebug1Proxy::new(&conn).await?;
+            proxy.reboot_dongle().await?;
         }
         Commands::GetAvailableCpuScalingGovernors => {
             let proxy = CpuScaling1Proxy::new(&conn).await?;
